@@ -110,11 +110,19 @@ export function RoomScreen({ credential, onLeave }: { credential: Credential; on
     {room.state === 'RUNNING' && (isHost && credential.role === 'teacher'
       ? <HostRace snapshot={snapshot} send={send} />
       : <Player snapshot={snapshot} connection={connectionRef.current!} verdictSignal={verdictSignal} />)}
-    {room.state === 'COLLECTING' && <section className="panel"><h2>集計しています</h2><p>全員の結果をまとめています…</p></section>}
+    {room.state === 'COLLECTING' && (credential.role !== 'teacher' && room.settings.gradingMode === 'deferred' && !snapshot.own?.finished
+      ? <Player snapshot={snapshot} connection={connectionRef.current!} verdictSignal={verdictSignal} />
+      : <section className="panel"><h2>集計しています</h2><p>全員の結果をまとめています…</p></section>)}
     {room.state === 'FINISHED' && <Results snapshot={snapshot} isClassTeacher={credential.role === 'teacher' && room.kind === 'class'} />}
     {room.state === 'CANCELLED' && <section className="panel"><h2>このルームは解散しました</h2><button type="button" className="secondary-button" onClick={onLeave}>ホームへ戻る</button></section>}
     {isHost && room.state === 'RUNNING' && credential.role === 'mate-host' && <div className="play-actions"><button type="button" className="danger-button" onClick={() => { if (confirm('競技を終了しますか？')) void send({ type: 'finish' }).catch(() => {}); }}>競技を終了する</button></div>}
   </main>;
+}
+
+function stableSettingsJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableSettingsJson).join(',')}]`;
+  if (value && typeof value === 'object') return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${JSON.stringify(k)}:${stableSettingsJson(v)}`).join(',')}}`;
+  return JSON.stringify(value);
 }
 
 function Lobby({ snapshot, isHost, joinUrl, send }: { snapshot: Snapshot; isHost: boolean; joinUrl: string; send: (m: Parameters<RoomConnection['send']>[0]) => Promise<unknown> }) {
@@ -139,9 +147,10 @@ function Lobby({ snapshot, isHost, joinUrl, send }: { snapshot: Snapshot; isHost
       {isHost && <>
         <h3>出題設定</h3>
         <CompetitionSettingsForm value={settings} onChange={setSettings} disabled={busy} mate={room.kind === 'mate'} />
+        {stableSettingsJson(settings) !== stableSettingsJson(room.settings) && <p className="settings-hint">設定が未反映です。「設定を反映」を押してから開始してください。</p>}
         <div className="play-actions">
           <button type="button" className="secondary-button" disabled={busy} onClick={() => void act(() => send({ type: 'settings', settings }))}>設定を反映</button>
-          <button type="button" className="primary-action" disabled={busy || participants.length < (room.kind === 'mate' ? 2 : 1)} onClick={() => void act(() => send({ type: 'start' }))}>開始する</button>
+          <button type="button" className="primary-action" disabled={busy || stableSettingsJson(settings) !== stableSettingsJson(room.settings) || participants.length < (room.kind === 'mate' ? 2 : 1)} onClick={() => void act(() => send({ type: 'start' }))}>開始する</button>
           <button type="button" className="danger-button" disabled={busy} onClick={() => { if (confirm('ルームを解散しますか？')) void act(() => send({ type: 'cancel' })); }}>解散する</button>
         </div>
       </>}

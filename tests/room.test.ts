@@ -122,3 +122,49 @@ describe('mate room (deferred grading)', () => {
     await f.runtime.dispose();
   }, 30000);
 });
+
+it('finishes a deferred mate room when the host submits first, and hides scores until the end', async () => {
+  const f = await fixture(false);
+  const { response, data } = await f.create({ ...settings, questionCount: 5, gradingMode: 'deferred' }, 'mate', 'ホスト');
+  expect(response.status).toBe(201);
+  const questions = await questionsOf(f, data.code);
+  const host = await f.connect(data.code);
+  await host.request({ type: 'hello', role: 'mate-host', token: data.token, participantId: data.participantId, nickname: 'ホスト' });
+  const guest = await f.connect(data.code);
+  const guestHello = await guest.request(credentials('ゲスト'));
+  const guestId = guestHello.state.own.id as string;
+  await host.request({ type: 'start' });
+  await new Promise(r => setTimeout(r, 5600));
+  let gseq = 0;
+  for (const q of questions) await guest.request({ type: 'draft', seq: ++gseq, answers: [{ questionId: q.id, fieldId: 'choice', value: q.answer.targetId }], advancedQuestionCount: q.ordinal });
+  let hseq = 0;
+  for (const q of questions) await host.request({ type: 'draft', seq: ++hseq, answers: [{ questionId: q.id, fieldId: 'choice', value: q.answer.targetId }], advancedQuestionCount: q.ordinal });
+  const afterHost = await host.request({ type: 'submit', seq: ++hseq });
+  expect(afterHost.state.room.state).toBe('RUNNING');
+  expect(afterHost.state.participants.find((p: any) => p.id === guestId).finished).toBe(false);
+  // P1: graded scores stay hidden in snapshots until FINISHED, also in mate rooms.
+  expect(afterHost.state.participants.every((p: any) => p.correctCount === 0)).toBe(true);
+  const done = await guest.request({ type: 'submit', seq: ++gseq });
+  expect(done.state.room.state).toBe('FINISHED');
+  expect(done.state.results.own.correctCount).toBe(5);
+  expect(done.state.participants.find((p: any) => p.id === data.participantId).correctCount).toBe(5);
+  await f.runtime.dispose();
+}, 30000);
+
+it('applies lobby settings changes before start and rejects them after start', async () => {
+  const f = await fixture(false);
+  const { response, data } = await f.create({ ...settings, questionCount: 5, gradingMode: 'immediate' }, 'mate', 'ホスト');
+  expect(response.status).toBe(201);
+  const host = await f.connect(data.code);
+  const hello = await host.request({ type: 'hello', role: 'mate-host', token: data.token, participantId: data.participantId, nickname: 'ホスト' });
+  const changed = await host.request({ type: 'settings', settings: { ...hello.state.room.settings, gradingMode: 'deferred' } });
+  expect(changed.state.room.settings.gradingMode).toBe('deferred');
+  const guest = await f.connect(data.code);
+  await guest.request(credentials('ゲスト'));
+  const started = await host.request({ type: 'start' });
+  expect(started.state.room.settings.gradingMode).toBe('deferred');
+  const rejected = await host.request({ type: 'settings', settings: { ...started.state.room.settings, gradingMode: 'immediate' } });
+  expect(rejected.type).toBe('error');
+  expect(rejected.code).toBe('not_waiting');
+  await f.runtime.dispose();
+}, 30000);

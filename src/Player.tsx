@@ -147,12 +147,20 @@ function ImmediatePlayer({ snapshot, send, verdictSignal, onReview }: { snapshot
 function DeferredPlayer({ snapshot, send }: { snapshot: Snapshot; send: Send }) {
   const deferred = snapshot.deferred;
   const [selections, setSelections] = useState<Record<string, string>>({});
+  const [updatedAt, setUpdatedAt] = useState<Record<string, number>>({});
   const [index, setIndex] = useState(0);
   const [maxVisited, setMaxVisited] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [syncError, setSyncError] = useState('');
   const [sel, setSel] = useState<{ structure: string | null; name: string | null }>({ structure: null, name: null });
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const selectionsRef = useRef(selections); selectionsRef.current = selections;
+  const updatedAtRef = useRef(updatedAt); updatedAtRef.current = updatedAt;
+  const maxVisitedRef = useRef(0);
+  const flushChain = useRef<Promise<void>>(Promise.resolve());
+  const collectingHandled = useRef(false);
   const code = snapshot.room.code, participantId = snapshot.own?.id ?? '';
+  const collecting = snapshot.room.state === 'COLLECTING';
 
   useEffect(() => {
     if (!deferred) return;
@@ -160,10 +168,59 @@ function DeferredPlayer({ snapshot, send }: { snapshot: Snapshot; send: Send }) 
     readDrafts(code, participantId).then(local => {
       if (!live) return;
       setSelections(mergeDrafts(deferred.drafts, local, Date.now(), code));
+      const times: Record<string, number> = {};
+      for (const r of local) times[r.question] = r.updatedAtMs;
+      setUpdatedAt(times);
     }).catch(() => setSelections({ ...deferred.drafts }));
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deferred?.questions.length, code, participantId]);
+
+  // Flush contract (same as IonicLite): always send the FULL current answer
+  // set as one batch and await its ACK. Sends are serialized through a chain
+  // so a submit can never overtake an unsent draft.
+  const flushNow = (): Promise<void> => {
+    const run = async () => {
+      const entries = Object.entries(selectionsRef.current)
+        .filter(([, v]) => v)
+        .map(([key, value]) => {
+          const [questionId, fieldId] = key.split(':');
+          return { questionId, fieldId: fieldId as AnswerFieldId, value };
+        });
+      if (!entries.length) return;
+      let captured = Math.max(0, ...entries.map(e => updatedAtRef.current[`${e.questionId}:${e.fieldId}`] ?? 0));
+      if (snapshot.room.state === 'COLLECTING') {
+        const lo = snapshot.room.startAtMs ?? 0;
+        const hi = snapshot.room.cutoffAtMs ?? snapshot.room.deadlineAtMs ?? captured;
+        captured = Math.min(Math.max(captured, lo), hi);
+      }
+      await send({ type: 'draft', answers: entries, advancedQuestionCount: maxVisitedRef.current, ...(captured ? { capturedAtMs: captured } : {}) });
+    };
+    const p = flushChain.current.then(run, run);
+    flushChain.current = p.catch(() => {});
+    return p;
+  };
+  const flushRef = useRef(flushNow); flushRef.current = flushNow;
+
+  const scheduleFlush = () => {
+    if (draftTimer.current) clearTimeout(draftTimer.current);
+    draftTimer.current = setTimeout(() => {
+      void flushRef.current().catch(() => setSyncError('回答を送信できませんでした。通信状態を確認してください'));
+    }, 350);
+  };
+
+  // COLLECTING recovery: once the room enters COLLECTING, flush whatever was
+  // edited before the deadline and file the final submission for grading.
+  useEffect(() => {
+    if (!collecting || snapshot.own?.finished || collectingHandled.current) return;
+    collectingHandled.current = true;
+    if (draftTimer.current) clearTimeout(draftTimer.current);
+    void (async () => {
+      try { await flushRef.current(); await send({ type: 'submit', final: true }); }
+      catch { setSyncError('締切前の回答を回収できませんでした'); }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collecting, snapshot.own?.finished]);
 
   const own = snapshot.own;
   if (own?.finished) {
@@ -177,23 +234,20 @@ function DeferredPlayer({ snapshot, send }: { snapshot: Snapshot; send: Send }) 
   const questions = deferred.questions;
   const question = questions[Math.min(index, questions.length - 1)];
 
-  const pushDraft = (questionId: string, fieldId: AnswerFieldId, value: string, visited: number) => {
-    if (draftTimer.current) clearTimeout(draftTimer.current);
-    draftTimer.current = setTimeout(() => {
-      void send({ type: 'draft', answers: [{ questionId, fieldId, value }], advancedQuestionCount: visited }).catch(() => {});
-    }, 350);
-  };
   const setValue = (fieldId: AnswerFieldId, value: string) => {
+    if (collecting) return;
     const key = `${question.id}:${fieldId}`;
+    const now = Date.now();
     setSelections(prev => ({ ...prev, [key]: value }));
-    void writeDraft({ key: `${code}:${participantId}:${key}`, room: code, participant: participantId, question: key, value, updatedAtMs: Date.now(), expiresAtMs: Date.now() + 7 * 24 * 3600 * 1000 }).catch(() => {});
-    pushDraft(question.id, fieldId, value, maxVisited);
+    setUpdatedAt(prev => ({ ...prev, [key]: now }));
+    void writeDraft({ key: `${code}:${participantId}:${key}`, room: code, participant: participantId, question: key, value, updatedAtMs: now, expiresAtMs: now + 7 * 24 * 3600 * 1000 }).catch(() => {});
+    scheduleFlush();
   };
   const goto = (next: number) => {
     const clamped = Math.max(0, Math.min(questions.length - 1, next));
     setIndex(clamped); setSel({ structure: null, name: null });
     const visited = Math.max(maxVisited, clamped);
-    setMaxVisited(visited);
+    setMaxVisited(visited); maxVisitedRef.current = visited;
   };
 
   const lockedFor = (q: PublicQuestion) => Object.fromEntries(q.fields.map(f => [f.id, selections[`${q.id}:${f.id}`]]).filter(([, v]) => v));
@@ -207,14 +261,26 @@ function DeferredPlayer({ snapshot, send }: { snapshot: Snapshot; send: Send }) 
   };
   const answered = questions.filter(q => q.fields.some(f => selections[`${q.id}:${f.id}`])).length;
 
+  const submit = async () => {
+    if (draftTimer.current) clearTimeout(draftTimer.current);
+    setBusy(true); setSyncError('');
+    try {
+      await flushNow();
+      await send({ type: 'submit' });
+    } catch {
+      setSyncError('提出できませんでした。通信状態を確認して、もう一度提出してください');
+    } finally { setBusy(false); }
+  };
+
   return <section className="panel play-panel">
     <p className="question-progress">{question.ordinal + 1}問目 / {questions.length}問　回答済み {answered}問</p>
+    {collecting && <p role="status">時間切れです。締切前の回答を回収しています…</p>}
     {question.prompt.kind === 'four' ? <>
       <FourPromptView question={question} />
       <div className="choice-list">
         {question.prompt.choices.map(c => {
           const current = selections[`${question.id}:choice`] === c.id;
-          return <button key={c.id} type="button" className="answer-choice" aria-pressed={current} onClick={() => setValue('choice', current ? '' : c.id)}>
+          return <button key={c.id} type="button" className="answer-choice" aria-pressed={current} disabled={collecting} onClick={() => setValue('choice', current ? '' : c.id)}>
             {c.structure ? <img className="structure-img" src={`/${c.structure}`} alt="選択肢の構造" /> : c.name}
           </button>;
         })}
@@ -224,14 +290,14 @@ function DeferredPlayer({ snapshot, send }: { snapshot: Snapshot; send: Send }) 
       <div className="pair-slots">
         {question.fields.map(f => {
           const v = selections[`${question.id}:${f.id}`];
-          return <button key={f.id} type="button" className="pair-slot" disabled={!v} onClick={() => setValue(f.id, '')}>
+          return <button key={f.id} type="button" className="pair-slot" disabled={!v || collecting} onClick={() => setValue(f.id, '')}>
             {v ? `${COMPOUND_BY_ID.get(v.split('=')[0])?.nameJa} ＝ ${COMPOUND_BY_ID.get(v.split('=')[1])?.nameJa}（タップで消す）` : 'ペア未設定'}
           </button>;
         })}
       </div>
       <PairBoard question={question} locked={lockedFor(question)} selected={sel} onSelectStructure={id => setSel(s => ({ ...s, structure: id }))} onSelectName={id => setSel(s => ({ ...s, name: id }))} />
       <div className="play-actions">
-        <button type="button" className="primary-action" disabled={!pairSelectionReady} onClick={assignPair}>ペアにする</button>
+        <button type="button" className="primary-action" disabled={!pairSelectionReady || collecting} onClick={assignPair}>ペアにする</button>
       </div>
     </>}
     <div className="play-actions pager">
@@ -241,6 +307,7 @@ function DeferredPlayer({ snapshot, send }: { snapshot: Snapshot; send: Send }) 
     <div className="question-dots">
       {questions.map((q, i) => <button key={q.id} type="button" className="dot" aria-pressed={i === index} aria-label={`${i + 1}問目`} onClick={() => goto(i)}>{q.fields.some(f => selections[`${q.id}:${f.id}`]) ? '●' : '○'}</button>)}
     </div>
-    <button type="button" className="primary-action submit-action" disabled={busy} onClick={async () => { setBusy(true); try { await send({ type: 'submit' }); } catch { /* shown by room */ } finally { setBusy(false); } }}>提出する</button>
+    {syncError && <p role="alert" className="error">{syncError}</p>}
+    {!collecting && <button type="button" className="primary-action submit-action" disabled={busy} onClick={() => void submit()}>{busy ? '送信中…' : '提出する'}</button>}
   </section>;
 }
