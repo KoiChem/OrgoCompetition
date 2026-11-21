@@ -1,4 +1,4 @@
-# オルゴコンペ (OrgoCompe)
+# オルゴコンペ (OrgoCompetition)
 
 OrgoRush（有機化合物の学習ゲーム）を基本にした、クラス／メイト対戦コンペアプリ。
 アルカンコンペ・イオンコンペの **Lite版**（Cloudflare Lite方式）を踏襲する。
