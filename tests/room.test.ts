@@ -88,3 +88,37 @@ describe('exclusion profile', () => {
     await f.runtime.dispose();
   });
 });
+
+describe('mate room (deferred grading)', () => {
+  it('mate host can choose deferred grading; drafts grade on submit', async () => {
+    const f = await fixture();
+    const { response, data } = await f.create({ ...settings, gradingMode: 'deferred' }, 'mate', 'ホスト');
+    expect(response.status).toBe(201);
+    const questions = await questionsOf(f, data.code);
+    const host = await f.connect(data.code);
+    const hostHello = await host.request({ type: 'hello', role: 'mate-host', token: data.token, participantId: data.participantId, nickname: 'ホスト' });
+    expect(hostHello.state.room.settings.gradingMode).toBe('deferred');
+    const guest = await f.connect(data.code);
+    await guest.request(credentials('ゲスト'));
+    await host.request({ type: 'start' });
+    await new Promise(r => setTimeout(r, 5600));
+    let gseq = 0;
+    for (const q of questions) {
+      const res = await guest.request({ type: 'draft', seq: ++gseq, answers: [{ questionId: q.id, fieldId: 'choice', value: q.answer.targetId }], advancedQuestionCount: q.ordinal });
+      expect(res.type).toBe('ack');
+    }
+    const guestSubmitted = await guest.request({ type: 'submit', seq: ++gseq });
+    expect(guestSubmitted.state.room.state).toBe('RUNNING');
+    expect(guestSubmitted.state.own.finished).toBe(true);
+    let hseq = 0;
+    for (const q of questions) {
+      await host.request({ type: 'draft', seq: ++hseq, answers: [{ questionId: q.id, fieldId: 'choice', value: q.answer.targetId }], advancedQuestionCount: q.ordinal });
+    }
+    const hostSubmitted = await host.request({ type: 'submit', seq: ++hseq });
+    expect(hostSubmitted.state.room.state).toBe('FINISHED');
+    expect(hostSubmitted.state.results.own.correctCount).toBe(5);
+    const guestState = await guest.request({ type: 'sync' });
+    expect(guestState.state.results.own.correctCount).toBe(5);
+    await f.runtime.dispose();
+  }, 30000);
+});

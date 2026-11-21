@@ -77,3 +77,35 @@ node scripts/phone-check.mjs                            # スマホ幅のスク�
 主要ファイル: `src/App.tsx`（Home/JoinPage/MateCreate/History）, `src/RoomScreen.tsx`, `src/Player.tsx`,
 `src/Settings.tsx`, `src/join-code.ts`, `src/credentials.ts`, `src/socket.ts`,
 `worker/room.ts`（OrgoRoom）, `worker/auth.ts`（TeachersDO）, `game/generator.ts`, `game/evaluator.ts`
+
+---
+
+## 追記（2026-11-21）: 正誤判定モードの改修 — レビュー対象に追加
+
+koike 指示により、正誤判定のモードについて既存コンペ2つを再確認し、オルゴコンペを改修した。**この追記分もレビュー対象に含めてほしい。**
+
+### 既存コンペ2つの実仕様（GitHub 実コードで確認済み）
+
+- アルカンLite（`cloudflare-lite/src/Settings.tsx`）・イオンLite（`src/features/setup/CompetitionSettingsForm.tsx` を Lite がそのまま使用）とも、設定フォームに **「判定方式」** の選択があり、ホストが **問題毎判定（immediate）／まとめて判定（deferred）** を選べる。既定は問題毎判定。ヒント文: 問題毎=「答えるたびに正誤がわかります」/ まとめて=「最後に提出して採点します」
+- どちらの Lite も、**クラス作成とメイト作成で同じ設定フォーム**を使っており、メイトでも判定方式を選べる
+
+### 改修前のオルゴコンペの不整合
+
+- クラス（教員）作成では判定方式を選べたが、**メイトでは設定フォームで判定方式を隠し、作成時に `immediate` を強制**していた（Lite と不整合）
+
+### 改修内容
+
+- `src/Settings.tsx`: 判定方式の選択肢とヒント文をメイトでも常時表示（クラスと同じフォーム）
+- `src/App.tsx`（MateCreatePage）: `gradingMode: 'immediate'` の強制を撤廃し、フォームで選んだ方式のまま作成
+- ロビーの設定変更フォーム（メイトホスト）でも判定方式を変更可能（開始前のみ、サーバー側で再生成）
+- サーバー側（ドラフト保存・提出時採点・COLLECTING 猶予・結果確定）は従来から両方式対応済みで変更なし。差し戻し（提出の取り消し）は Lite と同様にクラスのまとめて判定のみ
+
+### 追加した検証
+
+- 単体テストに **メイト＋まとめて判定の通しフロー** を追加（`tests/room.test.ts`）: メイト作成（deferred）→ ゲスト参加 → 開始 → 全問ドラフト → ゲスト提出（この時点では未終了・本人のみ確定）→ ホスト提出 → FINISHED・両者5点。全体で **21件全合格**
+- 実画面スモークを新設（`scripts/smoke-deferred.mjs`）: メイト作成画面で「まとめて判定」を選択 → ロビーの設定要約に「まとめて判定」表示 → ゲストが問題をページングして回答（回答済みカウント増加）→ 提出 → 提出済み表示まで通過
+
+### レビューで見てほしい点（追記分）
+
+- メイトのまとめて判定で、ホスト自身の提出前後・時間切れ（COLLECTING）時の結果確定の流れ
+- 判定方式をロビーで変更した際の再生成と既存参加者への影響（開始前のみ可、という前提でよいか）

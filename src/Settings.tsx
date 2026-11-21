@@ -48,8 +48,8 @@ export function CompetitionSettingsForm({ value, onChange, disabled, mate }: Pro
       <Choice legend="モード" values={['four', 'onePair', 'twoPair'] as const} value={value.mode} label={m => MODE_LABELS[m]} onChange={m => update('mode', m)} disabled={disabled} />
       <Choice legend="問題数" values={[5, 10] as const} value={value.questionCount} label={n => `${n}問`} onChange={n => update('questionCount', n)} disabled={disabled} />
       <Choice legend="制限時間" values={[3, 4, 5, 6, 7, 8, 9, 10] as const} value={value.timeLimitMinutes} label={n => `${n}分`} onChange={n => update('timeLimitMinutes', n)} disabled={disabled} />
-      {!mate && <><Choice legend="判定方式" values={['immediate', 'deferred'] as const} value={value.gradingMode} label={m => m === 'immediate' ? '問題毎判定' : 'まとめて判定'} onChange={m => update('gradingMode', m)} disabled={disabled} />
-      <p className="settings-hint">{value.gradingMode === 'deferred' ? '最後に提出して採点します' : '答えるたびに正誤がわかります'}</p></>}
+      <><Choice legend="判定方式" values={['immediate', 'deferred'] as const} value={value.gradingMode} label={m => m === 'immediate' ? '問題毎判定' : 'まとめて判定'} onChange={m => update('gradingMode', m)} disabled={disabled} />
+      <p className="settings-hint">{value.gradingMode === 'deferred' ? '最後に提出して採点します' : '答えるたびに正誤がわかります'}</p></>
     </div>
     {value.mode === 'four' ? <div className="settings-group">
       <MultiChoice legend="出題範囲" values={UNITS.map(u => u.name)} selected={value.units} label={n => n} note={n => `${fourChoicePool([n], excluded).length}件`} onChange={next => update('units', next)} disabled={disabled} />

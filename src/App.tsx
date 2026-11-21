@@ -230,7 +230,7 @@ function MateCreatePage({ onOpenRoom }: { onOpenRoom(c: Credential): void }) {
     setBusy(true); setError('');
     try {
       saveNickname(name.trim());
-      const response = await fetch('/api/rooms', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind: 'mate', nickname: name.trim(), settings: { ...settings, gradingMode: 'immediate' } }) });
+      const response = await fetch('/api/rooms', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind: 'mate', nickname: name.trim(), settings }) });
       const data = await response.json() as { code?: string; token?: string; participantId?: string; expiresAtMs?: number; error?: string };
       if (!response.ok || !data.code || !data.token || !data.participantId) throw new Error(data.error ?? 'ルームを作成できませんでした');
       const credential: Credential = { code: data.code, role: 'mate-host', token: data.token, participantId: data.participantId, nickname: name.trim(), expiresAtMs: data.expiresAtMs!, kind: 'mate' };
@@ -244,7 +244,7 @@ function MateCreatePage({ onOpenRoom }: { onOpenRoom(c: Credential): void }) {
       <h1>メイトマッチを作る</h1>
       <p>2〜4人で対戦します。作成者も解答します。</p>
       <label>あなたのニックネーム（1〜16文字）<input value={name} maxLength={16} onChange={e => setName(e.target.value)} /></label>
-      <CompetitionSettingsForm value={{ ...settings, gradingMode: 'immediate' }} onChange={setSettings} disabled={busy} mate />
+      <CompetitionSettingsForm value={settings} onChange={setSettings} disabled={busy} mate />
       {error && <p role="alert" className="error">{error}</p>}
       <div className="play-actions">
         <button type="button" className="primary-action" disabled={busy || !name.trim()} onClick={() => void create()}>{busy ? '作成中…' : 'メイトマッチを作成'}</button>
