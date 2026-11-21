@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import type { Credential, Snapshot, Verdict } from './protocol';
 import { RoomConnection } from './socket';
+import { saveCredential } from './credentials';
 import { Player } from './Player';
 import { ReviewList } from './Review';
 import { NicknameEditor } from './NicknameEditor';
@@ -34,7 +35,19 @@ export function RoomScreen({ credential, onLeave }: { credential: Credential; on
 
   useEffect(() => {
     const connection = new RoomConnection(credential, {
-      onState: (state) => { offsetRef.current = state.serverNow - Date.now(); setSnapshot(state); setError(''); },
+      onState: (state) => {
+        offsetRef.current = state.serverNow - Date.now();
+        // First snapshot carrying our own participant is the server join ACK:
+        // confirm the credential so re-entry never re-issues a new token.
+        if (credential.pending && state.own) {
+          credential.pending = false;
+          credential.nickname = state.own.nickname;
+          credential.kind = state.room.kind;
+          credential.expiresAtMs = state.room.expiresAtMs;
+          try { saveCredential(credential); } catch { /* storage unavailable */ }
+        }
+        setSnapshot(state); setError('');
+      },
       onStatus: setStatus,
       onError: (_code, message) => setError(message),
       onVerdict: (verdict) => setVerdictSignal(prev => ({ verdict, n: (prev?.n ?? 0) + 1 })),

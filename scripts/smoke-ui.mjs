@@ -16,8 +16,9 @@ try {
   log('HOME h1:', await host.locator('h1').first().textContent());
   await host.screenshot({ path: `${outDir}/01-home.png` });
 
-  // Mate create: nickname + create (defaults: four-choice, 10 questions)
-  await host.getByLabel('あなたのニックネーム').fill('テスト太郎');
+  // Mate create: go to the mate page, nickname + create (defaults: four-choice, 10 questions)
+  await host.getByRole('link', { name: 'メイトマッチ' }).click();
+  await host.getByLabel(/あなたのニックネーム/).fill('テスト太郎');
   await host.getByRole('button', { name: 'メイトマッチを作成' }).click();
   await host.locator('.room-code').waitFor({ timeout: 10000 });
   const code = (await host.locator('.room-code').textContent()).trim();
@@ -27,7 +28,10 @@ try {
   const guest = await browser.newPage({ viewport: { width: 420, height: 900 } });
   await guest.goto(base, { waitUntil: 'networkidle' });
   await guest.getByLabel('参加コード').fill(code);
-  await guest.getByRole('textbox', { name: 'ニックネーム', exact: true }).fill('テスト花子');
+  await guest.getByRole('button', { name: '参加する' }).click();
+  await guest.getByLabel(/ニックネーム/).waitFor({ timeout: 10000 });
+  log('JOIN page heading:', await guest.locator('h1').textContent());
+  await guest.getByLabel(/ニックネーム/).fill('テスト花子');
   await guest.getByRole('button', { name: '参加する' }).click();
   await guest.locator('.participant-list li').first().waitFor({ timeout: 10000 });
   log('GUEST lobby participants:', await guest.locator('.participant-list li').count());
