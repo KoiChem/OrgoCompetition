@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { COMPOUND_BY_ID, type AnswerFieldId, type PublicQuestion } from '../game/types';
 import type { ClientMessage, ServerMessage, Snapshot, Verdict } from './protocol';
 import type { RoomConnection } from './socket';
@@ -34,30 +34,44 @@ function FourPromptView({ question }: { question: PublicQuestion }) {
   </div>;
 }
 
-function PairBoard({ question, locked, selected, disabled, onSelectStructure, onSelectName }: {
+function PairBoard({ question, pairs, selected, disabled, action, onPick, onClear }: {
   question: PublicQuestion;
-  locked: Record<string, string>;
-  disabled?: boolean;
+  pairs: Record<string, string>;
+  disabled: boolean;
   selected: { structure: string | null; name: string | null };
-  onSelectStructure(id: string): void;
-  onSelectName(id: string): void;
+  action: ReactNode;
+  onPick(side: 'structure' | 'name', id: string): void;
+  onClear?(fieldId: AnswerFieldId): void;
 }) {
-  const p = question.prompt;
-  if (p.kind !== 'pair') return null;
-  const usedStructures = new Set(Object.values(locked).map(v => v.split('=')[0]));
-  const usedNames = new Set(Object.values(locked).map(v => v.split('=')[1]));
+  const prompt = question.prompt;
+  if (prompt.kind !== 'pair') return null;
+  const openIndex = question.fields.findIndex(field => !pairs[field.id]);
+  const renderCard = (side: 'structure' | 'name', id: string, index: number) => {
+    const slot = question.fields.findIndex(field => pairs[field.id]?.split('=')[side === 'structure' ? 0 : 1] === id);
+    const assigned = slot >= 0;
+    const active = selected[side] === id;
+    const color = assigned ? slot + 1 : active ? openIndex + 1 : undefined;
+    const compound = COMPOUND_BY_ID.get(id);
+    const label = side === 'structure' ? `構造 ${index + 1}` : compound?.nameJa ?? id;
+    const state = assigned ? `、ペア ${slot + 1}${onClear ? '、押すと解除' : '、確定済み'}` : '';
+    return <button key={id} type="button" className={`pair-card ${side}-card`}
+      data-pair={color} data-assigned={assigned || undefined}
+      aria-label={label + state} aria-pressed={active || assigned}
+      disabled={disabled || (assigned ? !onClear : openIndex < 0)}
+      onClick={() => assigned ? onClear?.(question.fields[slot].id) : onPick(side, id)}>
+      {assigned && <span className="pair-mark" aria-hidden="true">{slot === 0 ? '●' : '◆'}</span>}
+      {side === 'structure' ? <img className="structure-img" src={`/${compound?.structureSvg}`} alt="" /> : label}
+    </button>;
+  };
   return <div className="pair-board">
-    <div className="pair-column">
-      <p className="pair-column-label">構造</p>
-      {p.structures.map((id, index) => <button key={id} type="button" className="pair-card structure-card" aria-pressed={selected.structure === id} disabled={disabled || usedStructures.has(id)} onClick={() => onSelectStructure(id)}>
-        <img className="structure-img" src={`/${COMPOUND_BY_ID.get(id)?.structureSvg}`} alt={`構造 ${index + 1}`} />
-      </button>)}
+    <div className="pair-structures" role="group" aria-label="構造式">
+      {prompt.structures.map((id, index) => renderCard('structure', id, index))}
     </div>
-    <div className="pair-column">
-      <p className="pair-column-label">名前</p>
-      {p.names.map(id => <button key={id} type="button" className="pair-card name-card" aria-pressed={selected.name === id} disabled={disabled || usedNames.has(id)} onClick={() => onSelectName(id)}>
-        {COMPOUND_BY_ID.get(id)?.nameJa ?? id}
-      </button>)}
+    <div className="pair-name-row">
+      <div className="pair-names" role="group" aria-label="化合物名">
+        {prompt.names.map((id, index) => renderCard('name', id, index))}
+      </div>
+      {action}
     </div>
   </div>;
 }
@@ -121,7 +135,7 @@ function ImmediatePlayer({ snapshot, send, verdictSignal, connected, onReview }:
     try { setReview(await onReview()); } catch { setFeedback('問題一覧を取得できませんでした'); }
     finally { setBusy(false); }
   };
-  if (showReview || !question) return <section className="panel">
+  if (showReview || !question) return <section className="panel play-panel play-review">
     <h2>全解答確認</h2>
     {feedback && <p role="status">{feedback}</p>}
     {!review && <button type="button" className="secondary-button" disabled={busy || !connected} onClick={() => void openReview()}>これまでの問題を確認</button>}
@@ -162,21 +176,20 @@ function ImmediatePlayer({ snapshot, send, verdictSignal, connected, onReview }:
     void act({ type: 'pass', questionId: question.id, fieldId: unresolvedFields[0].id });
   };
 
-  return <section className="panel play-panel">
+  return <section className="panel play-panel play-question">
     <p className="question-progress">{question.ordinal + 1}問目 / {snapshot.room.settings.questionCount}問　スコア {own?.correctCount ?? 0} / {snapshot.room.maxScore}</p>
     {question.prompt.kind === 'four' ? <>
       <FourPromptView question={question} />
       <div className="choice-list">
-        {question.prompt.choices.map(c => <button key={c.id} type="button" className="answer-choice" disabled={busy || !connected} onClick={() => answerFour(c.id)}>
-          {c.structure ? <img className="structure-img" src={`/${c.structure}`} alt="選択肢の構造" /> : c.name}
+        {question.prompt.choices.map((c, i) => <button key={c.id} type="button" className="answer-choice" disabled={busy || !connected} onClick={() => answerFour(c.id)}>
+          {c.structure ? <img className="structure-img" src={`/${c.structure}`} alt={`選択肢 ${i + 1} の構造`} /> : c.name}
         </button>)}
       </div>
     </> : <>
       <p className="prompt-label">{question.fields.length === 2 ? '正しいペアを2組つくろう' : '正しいペアを1組つくろう'}（あと{unresolvedFields.length}組）</p>
-      <PairBoard question={question} locked={locked} selected={sel} disabled={busy || !connected} onSelectStructure={id => setSel(s => ({ ...s, structure: id }))} onSelectName={id => setSel(s => ({ ...s, name: id }))} />
-      <div className="play-actions">
-        <button type="button" className="primary-action" disabled={busy || !connected || !sel.structure || !sel.name} onClick={confirmPair}>このペアで確定</button>
-      </div>
+      <PairBoard question={question} pairs={locked} selected={sel} disabled={busy || !connected}
+        onPick={(side, id) => setSel(previous => ({ ...previous, [side]: previous[side] === id ? null : id }))}
+        action={<button type="button" className="primary-action pair-confirm" disabled={busy || !connected || !sel.structure || !sel.name} onClick={confirmPair}>確定</button>} />
     </>}
     <div className="play-actions">
       {!targetId && <button type="button" className="secondary-button" disabled={busy || !connected} onClick={pass}>パス</button>}
@@ -354,15 +367,24 @@ function DeferredPlayer({ snapshot, send, connected, serverNow }: {
 
   const locked = Object.fromEntries(question.fields.map(f => [f.id, selections[`${question.id}:${f.id}`]]).filter(([, value]) => value));
   const emptyField = question.fields.find(f => !selections[`${question.id}:${f.id}`]);
-  const assignPair = () => {
-    if (!emptyField || !sel.structure || !sel.name || !canEditNow()) return;
-    setValue(emptyField.id, `${sel.structure}=${sel.name}`);
+  const twoPairs = question.prompt.kind === 'pair' && question.fields.length === 2;
+  const assignPair = (structure: string | null, name: string | null) => {
+    if (!emptyField || !structure || !name || !canEditNow()) return;
+    setValue(emptyField.id, `${structure}=${name}`);
     setSel({ structure: null, name: null });
   };
+  const pickPair = (side: 'structure' | 'name', id: string) => {
+    if (!canEditNow()) return;
+    const next = { ...sel, [side]: sel[side] === id ? null : id };
+    if (twoPairs && next.structure && next.name) assignPair(next.structure, next.name);
+    else setSel(next);
+  };
+  const lastQuestion = index >= questions.length - 1;
+  const nextQuestion = () => lastQuestion ? setReviewing(true) : goto(index + 1);
   const answered = questions.filter(q => q.fields.every(f => selections[`${q.id}:${f.id}`])).length;
   const error = syncError && <p role="alert" className="error">{syncError}</p>;
 
-  if (reviewing) return <section className="panel play-panel">
+  if (reviewing) return <section className="panel play-panel play-review">
     <h2>全解答確認</h2>
     <p>回答済み {answered}問 / {questions.length}問</p>
     <ol className="review-list">{questions.map((q, i) => <li className="review-item" key={q.id}>
@@ -383,7 +405,7 @@ function DeferredPlayer({ snapshot, send, connected, serverNow }: {
     </div>
   </section>;
 
-  return <section className="panel play-panel">
+  return <section className="panel play-panel play-question">
     <p className="question-progress">{question.ordinal + 1}問目 / {questions.length}問　回答済み {answered}問</p>
     {question.prompt.kind === 'four' ? <>
       <FourPromptView question={question} />
@@ -397,25 +419,23 @@ function DeferredPlayer({ snapshot, send, connected, serverNow }: {
       </div>
     </> : <>
       <p className="prompt-label">{question.fields.length === 2 ? '正しいペアを2組つくろう' : '正しいペアを1組つくろう'}</p>
-      <div className="pair-slots">{question.fields.map(f => {
-        const value = selections[`${question.id}:${f.id}`];
-        return <button key={f.id} type="button" className="pair-slot" disabled={!value || !canEdit} onClick={() => setValue(f.id, '')}>
-          {value ? <><PairAnswer value={value} question={question} />（タップで消す）</> : 'ペア未設定'}
-        </button>;
-      })}</div>
-      <PairBoard question={question} locked={locked} selected={sel} disabled={!canEdit} onSelectStructure={id => setSel(s => ({ ...s, structure: id }))} onSelectName={id => setSel(s => ({ ...s, name: id }))} />
-      <div className="play-actions">
-        <button type="button" className="primary-action" disabled={!canEdit || !emptyField || !sel.structure || !sel.name} onClick={assignPair}>ペアにする</button>
-      </div>
+      <PairBoard question={question} pairs={locked} selected={sel} disabled={!canEdit}
+        onPick={pickPair} onClear={fieldId => {
+          setValue(fieldId, '');
+          setSel({ structure: null, name: null });
+        }}
+        action={twoPairs
+          ? <button type="button" className="primary-action pair-confirm" disabled={!canEdit || !!emptyField} onClick={nextQuestion}>{lastQuestion ? '解答確認' : '次へ'}</button>
+          : <button type="button" className="primary-action pair-confirm" disabled={!canEdit || !emptyField || !sel.structure || !sel.name} onClick={() => assignPair(sel.structure, sel.name)}>確定</button>} />
     </>}
     <div className="play-actions pager">
       <button type="button" className="secondary-button" disabled={!canEdit || index === 0} onClick={() => goto(index - 1)}>前の問題</button>
-      <button type="button" className="secondary-button" disabled={!canEdit || index >= questions.length - 1} onClick={() => goto(index + 1)}>次の問題</button>
+      {!twoPairs && <button type="button" className="secondary-button" disabled={!canEdit || lastQuestion} onClick={nextQuestion}>次の問題</button>}
+      <button type="button" className="secondary-button" disabled={!canEdit} onClick={() => setReviewing(true)}>全解答確認</button>
     </div>
     <div className="question-dots">
       {questions.map((q, i) => <button key={q.id} type="button" className="dot" disabled={!canEdit} aria-pressed={i === index} aria-label={`${i + 1}問目`} onClick={() => goto(i)}>{q.fields.every(f => selections[`${q.id}:${f.id}`]) ? '●' : '○'}</button>)}
     </div>
     {error}
-    <button type="button" className="secondary-button" disabled={!canEdit} onClick={() => setReviewing(true)}>全解答確認</button>
   </section>;
 }

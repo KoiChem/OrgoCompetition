@@ -103,8 +103,11 @@ export function RoomScreen({ credential, onLeave }: { credential: Credential; on
   const countingDown = room.state === 'COUNTDOWN';
   const showingPlayer = !classHost && (room.state === 'RUNNING' || collecting && room.settings.gradingMode === 'deferred' && !snapshot.own?.finished);
 
-  return <main className={`page-shell room-shell${classHost ? ' class-host-shell' : ''}`}>
-    <header className="room-header">
+  const guestPlaying = credential.role === 'participant' && (countingDown || room.state === 'RUNNING' || collecting);
+  const answering = guestPlaying || (credential.role === 'mate-host' && showingPlayer);
+
+  return <main className={`page-shell room-shell${classHost ? ' class-host-shell' : ''}${answering ? ' answer-room' : ''}`}>
+    {!guestPlaying && <header className="room-header">
       <div>
         <p className="eyebrow">{room.kind === 'mate' ? 'メイトマッチ' : 'クラスコンペ'}　コード {room.code}</p>
         <p className="settings-line">{settingsSummary(room.settings)}</p>
@@ -115,13 +118,17 @@ export function RoomScreen({ credential, onLeave }: { credential: Credential; on
         {isHost && <button type="button" className="secondary-button" onClick={sound.toggle}>ホスト音 {sound.on ? 'ON' : 'OFF'}</button>}
         <button type="button" className="secondary-button" onClick={onLeave}>ホーム</button>
       </div>
-    </header>
+    </header>}
     {error && <p role="alert" className="error">{error}</p>}
 
     {room.state === 'WAITING' && <Lobby snapshot={snapshot} isHost={isHost} joinUrl={joinUrl} send={send} connected={connected} />}
     {countingDown && !classHost && <section className="panel countdown-panel"><p className="countdown-number">{Math.max(1, Math.ceil((untilStart ?? 0) / 1000))}</p><p>まもなく開始！</p></section>}
     {classHost && (countingDown || room.state === 'RUNNING' || collecting) && <HostRace snapshot={snapshot} send={send} connected={connected} untilStart={untilStart ?? 0} />}
     {showingPlayer && <Player snapshot={snapshot} connection={connectionRef.current!} verdictSignal={verdictSignal} connected={connected} serverNow={() => Date.now() + offsetRef.current} />}
+    {guestPlaying && room.state === 'RUNNING' && <footer className="play-clock">
+      {!connected && <span role="status">{status}</span>}
+      <span>残り時間 <strong>{mmss(remaining ?? 0)}</strong></span>
+    </footer>}
     {collecting && !classHost && !showingPlayer && <section className="panel"><h2>集計しています</h2><p>全員の結果をまとめています…</p></section>}
     {room.state === 'FINISHED' && <Results snapshot={snapshot} isClassTeacher={classHost} />}
     {room.state === 'CANCELLED' && <section className="panel"><h2>このルームは解散しました</h2><button type="button" className="secondary-button" onClick={onLeave}>ホームへ戻る</button></section>}
@@ -214,8 +221,7 @@ function HostRace({ snapshot, send, connected, untilStart }: { snapshot: Snapsho
       const value = deferred ? p.answeredCount : p.correctCount;
       return <li key={p.id} className="race-row">
         <span className="race-name">{p.nickname}</span>
-        <div className="race-track">
-          <progress className="race-progress" aria-label={`${p.nickname}の${deferred ? '入力済み' : '得点'}`} value={value} max={maxScore} />
+        <div className="race-track" aria-hidden="true">
           {!collecting && <span className="race-marker" style={{ left: `${Math.min(100, value * 100 / maxScore)}%` }}>
             <HostRunner id={p.id} color={colorForRunner(snapshot.room.code, p.joinedOrder)} goal={!deferred && value >= maxScore} stopped={false} rest={countingDown || deferred && p.finished} />
           </span>}

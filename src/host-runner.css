@@ -44,8 +44,7 @@
 @keyframes goal-kick { 0%,18%,56%,100% { transform:rotate(0); } 34%,40% { transform:rotate(-9deg); } 73% { transform:rotate(6deg); } }
 @keyframes goal-rays { 0%,18%,56%,100% { opacity:.55; } 34%,40%,73% { opacity:1; } }
 @keyframes runner-sweat-flight { 0%,8% { opacity:0; transform:translate(2px,1px) scale(.75); } 20% { opacity:1; transform:translate(-3px,-5px) scale(.9); } 55% { opacity:1; transform:translate(-13px,-11px); } 90%,100% { opacity:0; transform:translate(-24px,4px) scale(.72); } }
-.race-track { position: relative; margin-inline: 22px; }
-.race-track .race-progress { display: block; }
+.race-track { position: relative; height: 48px; margin-inline: 22px; }
 .race-marker { position: absolute; bottom: -4px; transform: translateX(-50%); pointer-events: none; line-height: 0; transition: left .24s ease-out; }
 .race-marker .race-runner { width: 40px; height: 48px; }
 .race-marker .race-runner.is-resting { width: 44px; height: 40px; margin: 0; }
