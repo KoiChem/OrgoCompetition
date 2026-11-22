@@ -13,7 +13,7 @@
 * { box-sizing: border-box; }
 body {
   margin: 0; color: var(--ink);
-  font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", sans-serif;
+  font-family: ui-rounded, "Hiragino Maru Gothic ProN", "ヒラギノ丸ゴ ProN W4", "Yu Gothic", YuGothic, sans-serif;
   background-color: var(--bg);
   background-image:
     linear-gradient(var(--grid) 1px, transparent 1px),
@@ -210,4 +210,102 @@ main.home-shell { min-height: 100dvh; display: grid; place-items: center; paddin
 @media (max-width: 420px) {
   .class-host-shell .room-code { letter-spacing: .12em; }
   .host-progress .race-row { grid-template-columns: minmax(0, 1fr) minmax(54px, 1fr) minmax(62px, .9fr); }
+}
+
+
+/* Competition controls share the rounded, outlined style of the Lite apps. */
+button, input, select, a { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible, summary:focus-visible {
+  outline: 3px solid #c65b18;
+  outline-offset: 3px;
+}
+.panel {
+  padding: clamp(20px, 4vw, 32px);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  box-shadow: 2px 3px 0 rgba(120, 72, 30, .14);
+}
+.primary-action, .primary-link, .secondary-button, .danger-button, .choice,
+.answer-choice, .pair-card, .reopen-confirm, .nickname-actions button {
+  min-height: 48px;
+  border-radius: 14px 12px 15px 11px;
+  font-weight: 700;
+}
+.primary-action, .primary-link, .reopen-confirm {
+  border: 2px solid #b94b0b;
+  background: #c45210;
+  color: white;
+  box-shadow: 2px 3px 0 rgba(120, 72, 30, .18);
+}
+.secondary-button, .nickname-actions button {
+  border: 2px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+}
+.danger-button { border-width: 2px; }
+.choice { min-width: 64px; border: 2px solid #c45210; background: var(--surface); }
+.choice[aria-pressed="true"] {
+  border-color: #a63c00;
+  background: #a63c00;
+  color: white;
+  box-shadow: inset 0 0 0 2px white;
+}
+.choice[aria-pressed="true"] .choice-note { color: white; }
+.choice-grid, .play-actions, .nickname-actions, .home-nav, .reopen-actions { gap: 12px; }
+.answer-choice[aria-pressed="true"], .pair-card[aria-pressed="true"] {
+  border-color: #a63c00;
+  background: var(--select-soft);
+  box-shadow: inset 0 0 0 2px #a63c00;
+}
+input[type="text"], input[type="email"], input[type="search"], input:not([type]), select {
+  min-height: 48px;
+  border: 2px solid var(--line);
+}
+.home-card {
+  width: min(100%, 520px);
+  padding: clamp(20px, 5vw, 36px);
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  background: rgba(255, 253, 249, .97);
+  box-shadow: 2px 3px 0 rgba(120, 72, 30, .14);
+}
+.home-card h1 { font-size: clamp(1.45rem, 6vw, 2rem); line-height: 1.18; overflow-wrap: anywhere; }
+.home-nav .secondary-link {
+  display: grid;
+  place-items: center;
+  min-height: 48px;
+  border: 2px solid var(--line);
+  border-radius: 14px 12px 15px 11px;
+  color: #8c3908;
+  min-width: 0;
+  font-size: clamp(.8rem, 3.5vw, 1rem);
+  white-space: nowrap;
+}
+.qr-button { border-width: 2px; border-radius: 14px 12px 15px 11px; }
+@media (max-width: 420px) {
+  .panel { padding: 20px 16px; border-radius: 18px; }
+  .home-card { padding: 20px 16px; }
+  .active-room-links li { flex-wrap: wrap; }
+}
+
+/* Classroom lobby keeps the invitation prominent alongside the roster. */
+@media (min-width: 761px) {
+  .class-host-shell { max-width: 1500px; width: 100%; }
+  .class-host-shell .host-lobby {
+    grid-template-columns: minmax(320px, .9fr) minmax(330px, 1fr);
+    align-items: stretch;
+  }
+  .class-host-shell .join-panel {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+  }
+  .class-host-shell .host-lobby .join-panel svg { width: min(37vw, 46dvh, 420px); }
+  .class-host-shell .room-code { font-size: clamp(2.4rem, 5vw, 4.5rem); }
+}
+.host-lobby-roster .participant-list li { min-height: 52px; }
+.host-lobby-roster .participant-list li span {
+  font-size: clamp(1.05rem, 2vw, 1.5rem);
+  font-weight: 700;
 }

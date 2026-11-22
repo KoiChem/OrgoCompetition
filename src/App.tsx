@@ -59,8 +59,7 @@ function Home({ onOpenRoom }: { onOpenRoom(c: Credential): void }) {
   return <main className="home-shell">
     <section className="home-card" aria-labelledby="home-title">
       <header>
-        <p className="eyebrow">ORGO RUSH</p>
-        <h1 id="home-title">オルゴコンペ</h1>
+        <h1 id="home-title">OrgoRush Competition</h1>
       </header>
       <JoinCodeForm />
       <ActiveRooms rooms={rooms} onOpenRoom={onOpenRoom} />

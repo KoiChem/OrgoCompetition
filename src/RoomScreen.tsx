@@ -93,7 +93,7 @@ export function RoomScreen({ credential, onLeave }: { credential: Credential; on
   const send = (message: Parameters<RoomConnection['send']>[0]) => connectionRef.current!.send(message);
   const joinUrl = useMemo(() => `${location.origin}/#/join/${credential.code}`, [credential.code]);
 
-  if (!snapshot) return <main className="page-shell"><section className="panel"><h1>オルゴコンペ</h1><p role="status">{status}</p>{error && <p role="alert" className="error">{error}</p>}<button type="button" className="secondary-button" onClick={onLeave}>ホームへ戻る</button></section></main>;
+  if (!snapshot) return <main className="page-shell"><section className="panel"><h1>OrgoRush Competition</h1><p role="status">{status}</p>{error && <p role="alert" className="error">{error}</p>}<button type="button" className="secondary-button" onClick={onLeave}>ホームへ戻る</button></section></main>;
 
   const room = snapshot.room;
   const remaining = room.deadlineAtMs ? room.deadlineAtMs - serverNow : null;
