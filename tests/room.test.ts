@@ -173,6 +173,9 @@ it('admits and reconnects 50 classroom participants behind one network', async (
   const f = await fixture();
   try {
     const { data } = await f.create();
+    const unknown = await f.connect(data.code);
+    const rejected = await unknown.request({ ...credentials('未登録'), resumeOnly: true });
+    expect(rejected.code).toBe('unauthorized');
     const ip = '192.0.2.1';
     const students = Array.from({ length: 50 }, (_, i) => credentials(`生徒${i + 1}`));
     const clients = await Promise.all(students.map(async student => {
@@ -185,7 +188,7 @@ it('admits and reconnects 50 classroom participants behind one network', async (
     clients.forEach(client => client.socket.close());
     await Promise.all(students.map(async student => {
       const reconnected = await f.connect(data.code, ip);
-      const result = await reconnected.request(student);
+      const result = await reconnected.request({ ...student, resumeOnly: true });
       expect(result.state.room.participantCount).toBe(50);
       expect(result.state.own.id).toBe(student.participantId);
     }));

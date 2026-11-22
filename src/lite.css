@@ -161,8 +161,6 @@ main.home-shell { min-height: 100dvh; display: grid; place-items: center; paddin
 .home-card header { text-align: center; }
 .home-card .eyebrow { margin: 0; font-size: .78rem; font-weight: 800; letter-spacing: .22em; color: var(--accent-dark); }
 .home-card h1 { margin: 2px 0 0; font-size: 1.9rem; }
-.home-participation-status { min-height: 1.2em; font-size: .85rem; color: var(--ink-sub); }
-.home-participation-status p { margin: 2px 0 0; }
 .join-form { display: grid; gap: 8px; }
 .join-form > label { font-weight: 700; font-size: .92rem; }
 .join-row { display: flex; gap: 10px; align-items: stretch; }

@@ -43,11 +43,15 @@ export function RoomScreen({ credential, onLeave }: { credential: Credential; on
         offsetRef.current = state.serverNow - Date.now();
         // First snapshot carrying our own participant is the server join ACK:
         // confirm the credential so re-entry never re-issues a new token.
-        if (credential.pending && state.own) {
+        const { room } = state;
+        const resumeUntilMs = ['FINISHED', 'CANCELLED'].includes(room.state) ? 0
+          : room.deadlineAtMs ? (room.cutoffAtMs ?? room.deadlineAtMs) + 3000 : room.expiresAtMs;
+        if ((credential.pending && state.own) || credential.resumeUntilMs !== resumeUntilMs) {
           credential.pending = false;
-          credential.nickname = state.own.nickname;
-          credential.kind = state.room.kind;
-          credential.expiresAtMs = state.room.expiresAtMs;
+          credential.nickname = state.own?.nickname ?? credential.nickname;
+          credential.kind = room.kind;
+          credential.expiresAtMs = room.expiresAtMs;
+          credential.resumeUntilMs = resumeUntilMs;
           try { saveCredential(credential); } catch { /* storage unavailable */ }
         }
         setSnapshot(state); setError('');

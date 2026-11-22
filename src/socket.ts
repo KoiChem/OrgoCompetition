@@ -35,7 +35,7 @@ export class RoomConnection {
     this.callbacks.onStatus('接続中');
     const ws=new WebSocket(`${location.origin.replace(/^http/,'ws')}/api/rooms/${this.credential.code}/socket`);this.ws=ws;
     this.timeout=setTimeout(()=>ws.close(),10000);
-    ws.onopen=()=>{this.helloId=crypto.randomUUID();ws.send(JSON.stringify({type:'hello',requestId:this.helloId,role:this.credential.role,token:this.credential.token,participantId:this.credential.participantId,nickname:this.credential.nickname}));};
+    ws.onopen=()=>{this.helloId=crypto.randomUUID();ws.send(JSON.stringify({type:'hello',requestId:this.helloId,role:this.credential.role,resumeOnly:!this.credential.pending,token:this.credential.token,participantId:this.credential.participantId,nickname:this.credential.nickname}));};
     ws.onmessage=event=>{
       if(this.ws!==ws||this.stopped)return;
       if(event.data==='pong'){if(this.pongTimeout)clearTimeout(this.pongTimeout);this.pongTimeout=undefined;return;}

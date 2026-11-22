@@ -50,21 +50,20 @@ export default function App() {
     const role = params.get('role') === 'mate-host' ? 'mate-host' : 'participant';
     return <JoinPage key={code + role} code={code} role={role} onOpenRoom={openRoom} />;
   }
-  return <Home />;
+  return <Home onOpenRoom={openRoom} />;
 }
 
-function Home() {
+function Home({ onOpenRoom }: { onOpenRoom(c: Credential): void }) {
   const mate = useMateAvailability();
-  const active = useActiveRooms();
+  const rooms = recent().filter(c => c.role !== 'teacher' && (c.resumeUntilMs === undefined || c.resumeUntilMs > Date.now()));
   return <main className="home-shell">
     <section className="home-card" aria-labelledby="home-title">
       <header>
         <p className="eyebrow">ORGO RUSH</p>
         <h1 id="home-title">オルゴコンペ</h1>
-        <div className="home-participation-status">{active.checking ? <p role="status">参加状況を確認しています…</p> : null}</div>
       </header>
       <JoinCodeForm />
-      <ActiveRooms {...active} />
+      <ActiveRooms rooms={rooms} onOpenRoom={onOpenRoom} />
       <nav className="home-nav" aria-label="ルームを作成・管理する">
         <a className="secondary-link" href="#/teacher">クラスコンペ</a>
         <a className="secondary-link" href={mate.enabled === true ? '#/mate/new' : undefined} aria-disabled={mate.enabled !== true}>メイトマッチ</a>
@@ -113,40 +112,14 @@ function JoinCodeForm() {
   </form>;
 }
 
-function useActiveRooms() {
-  const [rooms, setRooms] = useState<Credential[]>([]);
-  const [checking, setChecking] = useState(false);
-  const [failed, setFailed] = useState(false);
-  const [revision, setRevision] = useState(0);
-  useEffect(() => {
-    let live = true;
-    const candidates = recent().filter(c => c.role === 'participant' || c.role === 'mate-host');
-    setRooms([]); setFailed(false); setChecking(candidates.length > 0);
-    void Promise.all(candidates.map(async c => {
-      try {
-        const s = await storedState(c);
-        return ['WAITING', 'COUNTDOWN', 'RUNNING', 'COLLECTING'].includes(s.room.state) ? c : null;
-      } catch (e) {
-        if (live && ![403, 404, 410].includes((e as { status?: number }).status ?? 0)) setFailed(true);
-        return null;
-      }
-    })).then(found => { if (live) { setRooms(found.filter((c): c is Credential => !!c)); setChecking(false); } });
-    return () => { live = false; };
-  }, [revision]);
-  return { rooms, checking, failed, retry: () => setRevision(v => v + 1) };
-}
-
-function ActiveRooms({ rooms, checking, failed, retry }: ReturnType<typeof useActiveRooms>) {
-  if (rooms.length === 0 && !(failed && !checking)) return null;
-  return <section className="active-room-links" aria-label="参加中の競技">
-    {rooms.length > 0 && <>
-      <h2>参加中の競技</h2>
-      <ul>{rooms.map(c => <li key={c.code + c.role}>
-        <span>{c.kind === 'mate' ? 'メイトマッチ' : 'クラスコンペ'}</span>
-        <a className="primary-link" href={`#/join/${c.code}${c.role === 'mate-host' ? '?role=mate-host' : ''}`}>参加中の競技に戻る</a>
-      </li>)}</ul>
-    </>}
-    {failed && !checking && <button type="button" className="secondary-button" onClick={retry}>参加状況を再確認</button>}
+function ActiveRooms({ rooms, onOpenRoom }: { rooms: Credential[]; onOpenRoom(c: Credential): void }) {
+  if (!rooms.length) return null;
+  return <section className="active-room-links" aria-label="保存した競技">
+    <h2>保存した競技</h2>
+    <ul>{rooms.map(c => <li key={c.code + c.role}>
+      <span>{c.kind === 'mate' ? 'メイトマッチ' : c.kind === 'class' ? 'クラスコンペ' : '競技'} {c.code}</span>
+      <button type="button" className="primary-link" onClick={() => onOpenRoom(c)}>競技に戻る</button>
+    </li>)}</ul>
   </section>;
 }
 
@@ -158,23 +131,6 @@ function JoinPage({ code, role, onOpenRoom }: { code: string; role: 'participant
   const [retry, setRetry] = useState(0);
   const pending = role === 'participant' && existing?.pending ? existing : null;
   const recovery = existing && !pending ? existing : null;
-  const [recoveryState, setRecoveryState] = useState<'checking' | 'active' | 'finished' | 'cancelled' | 'invalid' | 'error'>('checking');
-  const [recoveryRetry, setRecoveryRetry] = useState(0);
-  useEffect(() => {
-    if (!recovery) return;
-    let live = true;
-    setRecoveryState('checking');
-    void storedState(recovery).then(s => {
-      if (!live) return;
-      if (s.results || s.room.state === 'FINISHED') setRecoveryState('finished');
-      else if (s.room.state === 'CANCELLED') setRecoveryState('cancelled');
-      else setRecoveryState('active');
-    }).catch(e => {
-      if (!live) return;
-      setRecoveryState([403, 404, 410].includes((e as { status?: number }).status ?? 0) ? 'invalid' : 'error');
-    });
-    return () => { live = false; };
-  }, [recovery, recoveryRetry]);
   useEffect(() => {
     if (recovery || role === 'mate-host') return;
     let live = true;
@@ -205,14 +161,7 @@ function JoinPage({ code, role, onOpenRoom }: { code: string; role: 'participant
     <section className="panel">
       <p className="eyebrow">JOIN</p>
       <h1>競技に参加</h1>
-      {recovery ? <div>
-        {recoveryState === 'checking' ? <p role="status">参加資格を確認しています…</p>
-          : recoveryState === 'finished' ? <><p>競技は終了しました。</p><button type="button" className="primary-action" onClick={() => onOpenRoom(recovery)}>結果を見る</button></>
-          : recoveryState === 'active' ? <><h2>参加中の競技があります</h2><button type="button" className="primary-action" onClick={() => onOpenRoom(recovery)}>参加中の競技に戻る</button></>
-          : recoveryState === 'error' ? <><p role="status">通信できませんでした。参加資格は保持されています。</p><button type="button" className="secondary-button" onClick={() => setRecoveryRetry(v => v + 1)}>参加資格を再確認</button></>
-          : recoveryState === 'cancelled' ? <p role="status">このルームは解散しました。</p>
-          : <p role="status">この参加資格では競技に戻れません。</p>}
-      </div> : role === 'mate-host' ? <p role="status">このブラウザに作成者の参加資格がありません。</p> : <>
+      {recovery ? <button type="button" className="primary-action" onClick={() => onOpenRoom(recovery)}>競技に戻る</button> : role === 'mate-host' ? <p role="status">このブラウザに作成者の参加資格がありません。</p> : <>
         {info ? <div className="join-info">
           <p>{settingsSummary(info.room.settings)}</p>
           <p>参加 {info.participantCount}人 / 定員 {info.capacity}人</p>

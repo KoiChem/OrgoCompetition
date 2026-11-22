@@ -100,6 +100,7 @@ export class OrgoRoom extends DurableObject<OrgoEnv> {
           this.ctx.storage.transactionSync(() => {
             const existing = this.person(id);
             if (existing) { if (existing.removed) throw new RoomError('participant_removed', 'ホストがロビーからあなたのエントリーを削除しました'); if (existing.token_hash !== tokenHash) throw new RoomError('unauthorized', '参加情報を確認してください'); return; }
+            if (message!.resumeOnly === true) throw new RoomError('unauthorized', '参加資格を確認できません');
             if (room.state !== 'WAITING') throw new RoomError('already_started', '開始済みのコンペには新しく参加できません');
             const nickname = typeof message!.nickname === 'string' ? message!.nickname.trim() : '';
             this.validateNickname(nickname);
