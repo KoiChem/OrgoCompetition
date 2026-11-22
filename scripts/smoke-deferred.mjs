@@ -3,7 +3,7 @@
 import { chromium } from 'playwright-core';
 
 const base = process.argv[2] ?? 'http://localhost:8793';
-const executablePath = process.env.HOME + '/.cache/ms-playwright/chromium_headless_shell-1255/chrome-headless-shell-linux64/chrome-headless-shell';
+const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
 const browser = await chromium.launch({ executablePath, args: ['--no-sandbox'] });
 const log = (...a) => console.log(...a);
 try {
@@ -24,7 +24,7 @@ try {
     window.__sentFrames = [];
     const orig = WebSocket.prototype.send;
     WebSocket.prototype.send = function (data) {
-      try { const m = JSON.parse(String(data)); if (m.type === 'draft' || m.type === 'submit') window.__sentFrames.push({ type: m.type, answers: Array.isArray(m.answers) ? m.answers.length : 0 }); } catch {}
+      try { const m = JSON.parse(String(data)); if (m.type === 'draft' || m.type === 'submit') window.__sentFrames.push({ type: m.type, answers: m.answers ?? [] }); } catch {}
       return orig.call(this, data);
     };
   });
@@ -39,7 +39,7 @@ try {
   await host.getByRole('button', { name: '開始する' }).click();
 
   // Deferred player: answer ALL 5 questions rapidly, then submit immediately.
-  // Flush contract: a draft frame carrying all 5 answers must precede submit.
+  // The server must receive all five answers before submit, including a later clear.
   await guest.locator('.answer-choice').first().waitFor({ timeout: 20000 });
   log('GUEST deferred progress:', await guest.locator('.question-progress').textContent());
   for (let i = 0; i < 5; i++) {
@@ -47,16 +47,26 @@ try {
     if (i < 4) await guest.getByRole('button', { name: '次の問題' }).click();
   }
   log('GUEST after rapid answering:', await guest.locator('.question-progress').textContent());
+  await guest.waitForFunction(() => new Set(window.__sentFrames.flatMap(frame => frame.answers.map(answer => answer.questionId))).size === 5);
+  await guest.getByRole('button', { name: '1問目', exact: true }).click();
+  await guest.locator('.answer-choice').first().click();
+  await guest.getByRole('button', { name: '全解答確認' }).click();
+  await guest.getByText('未回答', { exact: true }).waitFor();
   await guest.getByRole('button', { name: '提出する' }).click();
   await guest.getByText('提出済み').first().waitFor({ timeout: 10000 });
   log('GUEST submitted state shown: OK');
   const sentFrames = await guest.evaluate(() => window.__sentFrames);
   const submitIdx = sentFrames.findIndex(f => f.type === 'submit');
-  const fullDraftBeforeSubmit = submitIdx > 0 && sentFrames.slice(0, submitIdx).some(f => f.type === 'draft' && f.answers === 5);
+  const answers = sentFrames.slice(0, submitIdx).flatMap(frame => frame.answers);
+  const clearedBeforeSubmit = answers.some(answer => answer.value === '');
+  const answeredBeforeSubmit = new Set(answers.filter(answer => answer.value).map(answer => answer.questionId)).size === 5;
   log('WS frames:', JSON.stringify(sentFrames));
-  if (!fullDraftBeforeSubmit) throw new Error('flush contract violated: no full draft (5 answers) before submit');
-  log('FLUSH CONTRACT OK: full draft preceded submit');
-  await guest.screenshot({ path: 'smoke/05-deferred-submitted.png', fullPage: true });
+  if (submitIdx < 1 || !clearedBeforeSubmit || !answeredBeforeSubmit) throw new Error('flush contract violated: not all answers and clear preceded submit');
+  await host.getByRole('button', { name: '全解答確認' }).click();
+  await host.getByRole('button', { name: '提出する' }).click();
+  const firstReview = guest.getByRole('heading', { name: '1問目', exact: true }).locator('..');
+  await firstReview.getByText('未回答', { exact: true }).waitFor();
+  log('FLUSH CONTRACT OK: all edits arrived, and the first answer was blank in the results');
   log('SMOKE DEFERRED OK');
 } finally {
   await browser.close();

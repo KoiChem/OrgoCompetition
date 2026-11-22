@@ -185,3 +185,31 @@ main.home-shell { min-height: 100dvh; display: grid; place-items: center; paddin
 .review-card p { margin: 0; }
 .link-button { display: inline-grid; place-items: center; text-decoration: none; }
 .join-info p { margin: 2px 0; }
+
+/* Classroom host */
+.class-host-shell { max-width: 1120px; }
+.host-lobby { align-items: start; }
+.host-lobby .join-panel svg { height: auto; width: min(224px, 100%); }
+.host-lobby-roster .participant-list { max-height: 280px; overflow: auto; }
+.host-lobby-roster .participant-list li { padding: 6px 4px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.host-settings > summary, .host-progress summary { cursor: pointer; font-weight: 700; }
+.host-settings[open] > summary, .host-progress details[open] > summary { margin-bottom: 14px; }
+.host-progress-heading { display: grid; justify-items: center; text-align: center; }
+.host-progress-heading > p { margin: 0 0 18px; }
+.host-progress-heading > h1 { margin-bottom: 8px; }
+.host-progress .race-row { grid-template-columns: minmax(0, 1fr) minmax(64px, 3fr) minmax(62px, 1fr); }
+.race-name { overflow-wrap: anywhere; }
+.race-score { text-align: right; }
+.race-score small, .ranking-list small { display: block; }
+.race-progress { appearance: none; width: 100%; height: 16px; border: 1px solid var(--line); border-radius: 100px; background: var(--surface-2); overflow: hidden; accent-color: var(--action); }
+.race-progress::-webkit-progress-bar { background: var(--surface-2); }
+.race-progress::-webkit-progress-value { background: var(--action); }
+.race-progress::-moz-progress-bar { background: var(--action); }
+.host-collecting { min-height: 240px; align-content: center; }
+.host-collecting > details { margin-inline: auto; max-width: 660px; }
+.ranking-list li > span { min-width: 0; overflow-wrap: anywhere; }
+.ranking-list li > span:last-child { text-align: right; }
+@media (max-width: 420px) {
+  .class-host-shell .room-code { letter-spacing: .12em; }
+  .host-progress .race-row { grid-template-columns: minmax(0, 1fr) minmax(54px, 1fr) minmax(62px, .9fr); }
+}

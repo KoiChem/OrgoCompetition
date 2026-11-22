@@ -1,0 +1,58 @@
+/* Running figure motion follows the Lite host display. */
+.host-race { --bob-half: .2s; --arm-half: .2s; --sweat-cycle: 1.2s; --drop-gap: .22s; }
+.race-runner { width:48px; height:68px; overflow:visible; fill:none; stroke:currentColor; stroke-width:4; stroke-linecap:round; stroke-linejoin:round; animation:runner-bob var(--bob-half) ease-in-out infinite alternate; animation-delay:var(--runner-phase); }
+.race-runner.is-resting,.race-runner.is-dashing { animation:none; }
+.race-runner.is-resting { width:60px; height:54px; margin:7px 0 0 -6px; }
+.runner-rest-body { stroke-width:3.5; }
+.runner-rest-right-arm,.runner-rest-left-arm,.runner-rest-right-leg,.runner-rest-left-leg { stroke-width:3.1; }
+.runner-rest-sleep { stroke:none; fill:currentColor; font-size:12px; transform-box:fill-box; transform-origin:center; animation:rest-sleep-sway 4.5s ease-in-out infinite alternate; }
+.race-runner.is-stopped .runner-rest-sleep,.host-race.is-light .runner-rest-sleep { animation:none; }
+.runner-dash-arm,.runner-dash-leg { transform-box:view-box; transform-origin:-4px -8px; animation:dash-stride .14s ease-in-out alternate infinite; }
+.runner-dash-arm { animation-direction:alternate-reverse; }
+.runner-dash-speed { stroke-width:2.5; opacity:.7; animation:dash-lines .24s ease-out infinite; }
+.host-race.is-light .runner-dash-arm,.host-race.is-light .runner-dash-leg,.host-race.is-light .runner-dash-speed { animation:none; }
+.host-race.is-light .runner-dash-speed { display:none; }
+.runner-head { fill:currentColor; }
+.runner-shadow { fill:currentColor; stroke:none; opacity:.14; }
+.runner-head-motion { transform-box:view-box; transform-origin:0px -26px; animation:head-lag var(--bob-half) ease-in-out infinite alternate; animation-delay:var(--runner-phase); }
+.runner-arm,.runner-leg { transform-box:view-box; }.runner-arm-left { transform-origin:0px -17px; animation:arm-left var(--arm-half) ease-in-out infinite alternate; animation-delay:var(--runner-phase); }.runner-arm-right { transform-origin:1px -17px; animation:arm-right var(--arm-half) ease-in-out infinite alternate; animation-delay:var(--runner-phase); }
+.runner-leg-left,.runner-leg-right { transform-origin:2px -5px; animation:leg-left var(--arm-half) ease-in-out infinite alternate; animation-delay:var(--runner-phase); }.runner-leg-right { animation-name:leg-right; }
+.runner-sweat-drop { fill:#8fdcff; stroke:none; opacity:0; animation:runner-sweat-flight var(--sweat-cycle) ease-in-out infinite; animation-delay:var(--runner-phase); }
+.runner-sweat-drop:nth-child(2) { animation-delay:calc(var(--runner-phase) - var(--drop-gap)); }
+.runner-sweat-drop:nth-child(3) { animation-delay:calc(var(--runner-phase) - var(--drop-gap) - var(--drop-gap)); }
+.race-runner.is-stopped,.race-runner.is-stopped .runner-arm,.race-runner.is-stopped .runner-leg,.race-runner.is-stopped .runner-head-motion,.host-race.is-light .race-runner,.host-race.is-light .runner-arm,.host-race.is-light .runner-leg,.host-race.is-light .runner-head-motion { animation:none; }
+.race-runner.is-stopped .runner-sweat,.race-runner.is-goal .runner-sweat,.host-race.is-light .runner-sweat { display:none; }
+.race-runner.is-goal,.race-runner.is-goal .runner-head-motion { animation:none; }
+.runner-goal-arm-left,.runner-goal-arm-right { transform-box:view-box; animation:goal-wave .6s ease-in-out infinite; }
+.runner-goal-arm-left { transform-origin:0px -17px; }
+.runner-goal-arm-right { transform-origin:1px -17px; animation-name:goal-wave-right; }
+.runner-goal-kicked-leg { transform-box:view-box; transform-origin:2px -5px; animation:goal-kick 1.2s ease-in-out infinite; }
+.runner-joy-rays { stroke-width:2.5; animation:goal-rays 1.2s ease-in-out infinite; }
+.runner-joy-ray-1 { stroke:#e893b9; }.runner-joy-ray-2 { stroke:#d9b46d; }.runner-joy-ray-3 { stroke:#72bda0; }.runner-joy-ray-4 { stroke:#73aed6; }.runner-joy-ray-5 { stroke:#aa91cc; }
+.race-runner.is-goal.is-stopped .runner-goal-arm-left,.race-runner.is-goal.is-stopped .runner-goal-arm-right,.race-runner.is-goal.is-stopped .runner-goal-kicked-leg,.race-runner.is-goal.is-stopped .runner-joy-rays,.host-race.is-light .runner-goal-arm-left,.host-race.is-light .runner-goal-arm-right,.host-race.is-light .runner-goal-kicked-leg,.host-race.is-light .runner-joy-rays { animation:none; }
+@keyframes runner-bob { from { transform:translateY(2px) rotate(4deg); } to { transform:translateY(-2px) rotate(6deg); } }
+@keyframes dash-stride { from { transform:translateX(-1px) rotate(-3deg); } to { transform:translateX(1px) rotate(3deg); } }
+@keyframes dash-lines { from { opacity:.7; transform:translateX(2px); } to { opacity:0; transform:translateX(-5px); } }
+@keyframes rest-sleep-sway { from { opacity:.7; transform:translate(-2px,2px) rotate(-3deg); } to { opacity:1; transform:translate(2px,-3px) rotate(3deg); } }
+@keyframes head-lag { from { transform:rotate(2deg); } to { transform:rotate(-2deg); } }
+@keyframes arm-left { from { transform:rotate(-45deg); } to { transform:rotate(35deg); } }
+@keyframes arm-right { from { transform:rotate(35deg); } to { transform:rotate(-45deg); } }
+@keyframes leg-left { from { transform:rotate(45deg); } to { transform:rotate(-50deg); } }
+@keyframes leg-right { from { transform:rotate(-50deg); } to { transform:rotate(45deg); } }
+@keyframes goal-wave { 0%,100% { transform:rotate(-20deg); } 50% { transform:rotate(0); } }
+@keyframes goal-wave-right { 0%,100% { transform:rotate(20deg); } 50% { transform:rotate(0); } }
+@keyframes goal-kick { 0%,18%,56%,100% { transform:rotate(0); } 34%,40% { transform:rotate(-9deg); } 73% { transform:rotate(6deg); } }
+@keyframes goal-rays { 0%,18%,56%,100% { opacity:.55; } 34%,40%,73% { opacity:1; } }
+@keyframes runner-sweat-flight { 0%,8% { opacity:0; transform:translate(2px,1px) scale(.75); } 20% { opacity:1; transform:translate(-3px,-5px) scale(.9); } 55% { opacity:1; transform:translate(-13px,-11px); } 90%,100% { opacity:0; transform:translate(-24px,4px) scale(.72); } }
+.race-track { position: relative; margin-inline: 22px; }
+.race-track .race-progress { display: block; }
+.race-marker { position: absolute; bottom: -4px; transform: translateX(-50%); pointer-events: none; line-height: 0; transition: left .24s ease-out; }
+.race-marker .race-runner { width: 40px; height: 48px; }
+.race-marker .race-runner.is-resting { width: 44px; height: 40px; margin: 0; }
+.host-race .race-row { min-height: 58px; }
+.host-race.is-light .race-marker { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .host-race .race-marker { transition: none; }
+  .host-race .race-runner, .host-race .race-runner * { animation: none; }
+  .host-race .runner-sweat { display: none; }
+}

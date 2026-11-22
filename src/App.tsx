@@ -43,8 +43,13 @@ export default function App() {
   if (hash.startsWith('#/teacher')) return <TeacherArea onOpenRoom={openRoom} />;
   if (hash.startsWith('#/mate/new')) return <MateCreatePage onOpenRoom={openRoom} />;
   if (hash.startsWith('#/history')) return <HistoryPage onOpenRoom={openRoom} />;
-  const joinMatch = /^#\/join\/([A-Z2-9]{6})/.exec(hash) ?? /^#\/join\?code=([A-Z2-9]{6})/.exec(hash);
-  if (joinMatch) return <JoinPage code={joinMatch[1]} onOpenRoom={openRoom} />;
+  const [path, search] = hash.split('?');
+  const params = new URLSearchParams(search);
+  const code = /^#\/join\/([A-Z2-9]{6})$/.exec(path)?.[1] ?? (path === '#/join' ? params.get('code') : null);
+  if (code && /^[A-Z2-9]{6}$/.test(code)) {
+    const role = params.get('role') === 'mate-host' ? 'mate-host' : 'participant';
+    return <JoinPage key={code + role} code={code} role={role} onOpenRoom={openRoom} />;
+  }
   return <Home />;
 }
 
@@ -81,6 +86,12 @@ function JoinCodeForm() {
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [scanning, setScanning] = useState(false);
+  const onScan = useCallback((value: string) => {
+    setScanning(false);
+    const parsed = parseJoinCode(value);
+    if (parsed) location.hash = `/join/${parsed}`;
+    else setError('QRコードから参加コードを読めませんでした');
+  }, []);
   const go = (value: string) => {
     const parsed = parseJoinCode(value);
     if (!parsed) { setError('参加コードは6文字で入力してください'); return; }
@@ -97,7 +108,7 @@ function JoinCodeForm() {
       </div>
       <button type="submit" className="primary-action join-submit">参加する</button>
     </div>
-    {scanning && <QrScanner onCode={(value) => { setScanning(false); const parsed = parseJoinCode(value); if (parsed) location.hash = `/join/${parsed}`; else setError('QRコードから参加コードを読めませんでした'); }} onClose={() => setScanning(false)} />}
+    {scanning && <QrScanner onCode={onScan} onClose={() => setScanning(false)} />}
     {error && <p role="alert" className="error">{error}</p>}
   </form>;
 }
@@ -132,21 +143,21 @@ function ActiveRooms({ rooms, checking, failed, retry }: ReturnType<typeof useAc
       <h2>参加中の競技</h2>
       <ul>{rooms.map(c => <li key={c.code + c.role}>
         <span>{c.kind === 'mate' ? 'メイトマッチ' : 'クラスコンペ'}</span>
-        <a className="primary-link" href={`#/join/${c.code}`}>参加中の競技に戻る</a>
+        <a className="primary-link" href={`#/join/${c.code}${c.role === 'mate-host' ? '?role=mate-host' : ''}`}>参加中の競技に戻る</a>
       </li>)}</ul>
     </>}
     {failed && !checking && <button type="button" className="secondary-button" onClick={retry}>参加状況を再確認</button>}
   </section>;
 }
 
-function JoinPage({ code, onOpenRoom }: { code: string; onOpenRoom(c: Credential): void }) {
-  const existing = useRef(readCredential(code, 'participant'));
-  const [nickname, setNickname] = useState(() => existing.current?.pending ? existing.current.nickname ?? '' : savedNickname());
+function JoinPage({ code, role, onOpenRoom }: { code: string; role: 'participant' | 'mate-host'; onOpenRoom(c: Credential): void }) {
+  const [existing] = useState(() => readCredential(code, role));
+  const [nickname, setNickname] = useState(() => existing?.pending ? existing.nickname ?? '' : savedNickname());
   const [info, setInfo] = useState<{ room: { state: string; settings: OrgoGameSettings }; participantCount: number; capacity: number } | null>(null);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
-  const pending = existing.current?.pending ? existing.current : null;
-  const recovery = existing.current && !pending ? existing.current : null;
+  const pending = role === 'participant' && existing?.pending ? existing : null;
+  const recovery = existing && !pending ? existing : null;
   const [recoveryState, setRecoveryState] = useState<'checking' | 'active' | 'finished' | 'cancelled' | 'invalid' | 'error'>('checking');
   const [recoveryRetry, setRecoveryRetry] = useState(0);
   useEffect(() => {
@@ -165,6 +176,7 @@ function JoinPage({ code, onOpenRoom }: { code: string; onOpenRoom(c: Credential
     return () => { live = false; };
   }, [recovery, recoveryRetry]);
   useEffect(() => {
+    if (recovery || role === 'mate-host') return;
     let live = true;
     void fetch(`/api/rooms/${code}/info`).then(async r => {
       const body = await r.json();
@@ -172,7 +184,7 @@ function JoinPage({ code, onOpenRoom }: { code: string; onOpenRoom(c: Credential
       if (live) setInfo(body);
     }).catch(e => { if (live) setError(e instanceof Error ? e.message : 'ルーム情報を取得できませんでした'); });
     return () => { live = false; };
-  }, [code, retry]);
+  }, [code, recovery, retry, role]);
 
   const join = () => {
     const name = nickname.trim();
@@ -184,7 +196,8 @@ function JoinPage({ code, onOpenRoom }: { code: string; onOpenRoom(c: Credential
       expiresAtMs: Date.now() + 2 * 60 * 60 * 1000, pending: true,
     };
     credential.nickname = name;
-    saveCredential(credential);
+    try { saveCredential(credential); }
+    catch { setError('参加情報を保存できません。ブラウザの保存設定を確認してください。'); return; }
     onOpenRoom(credential);
   };
 
@@ -197,8 +210,9 @@ function JoinPage({ code, onOpenRoom }: { code: string; onOpenRoom(c: Credential
           : recoveryState === 'finished' ? <><p>競技は終了しました。</p><button type="button" className="primary-action" onClick={() => onOpenRoom(recovery)}>結果を見る</button></>
           : recoveryState === 'active' ? <><h2>参加中の競技があります</h2><button type="button" className="primary-action" onClick={() => onOpenRoom(recovery)}>参加中の競技に戻る</button></>
           : recoveryState === 'error' ? <><p role="status">通信できませんでした。参加資格は保持されています。</p><button type="button" className="secondary-button" onClick={() => setRecoveryRetry(v => v + 1)}>参加資格を再確認</button></>
+          : recoveryState === 'cancelled' ? <p role="status">このルームは解散しました。</p>
           : <p role="status">この参加資格では競技に戻れません。</p>}
-      </div> : <>
+      </div> : role === 'mate-host' ? <p role="status">このブラウザに作成者の参加資格がありません。</p> : <>
         {info ? <div className="join-info">
           <p>{settingsSummary(info.room.settings)}</p>
           <p>参加 {info.participantCount}人 / 定員 {info.capacity}人</p>
@@ -263,7 +277,8 @@ function HistoryPage({ onOpenRoom }: { onOpenRoom(c: Credential): void }) {
     void Promise.all(recent().map(async (credential): Promise<{ credential: Credential; state?: Snapshot; message?: string }> => {
       try {
         const state = await storedState(credential);
-        return state.results ? { credential, state } : { credential, state, message: '競技中・結果確定待ち' };
+        if (state.results) return { credential, state };
+        return { credential, state, message: state.room.state === 'CANCELLED' ? '解散しました' : '競技中・結果確定待ち' };
       } catch (e) {
         return { credential, message: e instanceof Error ? e.message : '通信できません。再試行してください' };
       }
@@ -323,9 +338,25 @@ function QrScanner({ onCode, onClose }: { onCode(value: string): void; onClose()
       }
       raf = requestAnimationFrame(tick);
     };
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-      .then(s => { stream = s; if (videoRef.current) { videoRef.current.srcObject = s; void videoRef.current.play(); } tick(); })
-      .catch(() => setError('カメラを使えませんでした。参加コードを入力してください。'));
+    void (async () => {
+      try {
+        const camera = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        if (stopped) {
+          camera.getTracks().forEach(track => track.stop());
+          return;
+        }
+        stream = camera;
+        if (videoRef.current) {
+          videoRef.current.srcObject = camera;
+          await videoRef.current.play();
+        }
+        tick();
+      } catch {
+        stream?.getTracks().forEach(track => track.stop());
+        stream = null;
+        if (!stopped) setError('カメラを使えませんでした。参加コードを入力してください。');
+      }
+    })();
     return () => { stopped = true; cancelAnimationFrame(raf); stream?.getTracks().forEach(t => t.stop()); };
   }, [onCode]);
   return <div className="qr-modal" role="dialog" aria-label="QRコード読み取り">

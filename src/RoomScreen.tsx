@@ -8,7 +8,11 @@ import { ReviewList } from './Review';
 import { NicknameEditor } from './NicknameEditor';
 import { CompetitionSettingsForm, settingsSummary } from './Settings';
 import type { OrgoGameSettings } from '../game/types';
-import { HostSoundGate, playBoundary, playTick, useHostSoundToggle } from './host-sound';
+import { CollectingParade } from './CollectingParade';
+import { HostRunner } from './HostRunner';
+import { colorForRunner } from './host-race-colors';
+import './host-runner.css';
+import { HostSoundGate, playBoundary, playTick, primeAudio, useHostSoundToggle } from './host-sound';
 
 function useNow(active: boolean) {
   const [now, setNow] = useState(Date.now());
@@ -69,6 +73,7 @@ export function RoomScreen({ credential, onLeave }: { credential: Credential; on
   const roomState = snapshot?.room.state;
   const now = useNow(roomState === 'RUNNING' || roomState === 'COUNTDOWN');
   const serverNow = now + offsetRef.current;
+  const connected = status === '接続済み' || status === '送信中';
 
   // Host sound: ticks before start/deadline, long tone at boundaries.
   const sound = useHostSoundToggle();
@@ -89,8 +94,12 @@ export function RoomScreen({ credential, onLeave }: { credential: Credential; on
   const room = snapshot.room;
   const remaining = room.deadlineAtMs ? room.deadlineAtMs - serverNow : null;
   const untilStart = room.startAtMs ? room.startAtMs - serverNow : null;
+  const classHost = credential.role === 'teacher' && room.kind === 'class';
+  const collecting = room.state === 'COLLECTING';
+  const countingDown = room.state === 'COUNTDOWN';
+  const showingPlayer = !classHost && (room.state === 'RUNNING' || collecting && room.settings.gradingMode === 'deferred' && !snapshot.own?.finished);
 
-  return <main className="page-shell room-shell">
+  return <main className={`page-shell room-shell${classHost ? ' class-host-shell' : ''}`}>
     <header className="room-header">
       <div>
         <p className="eyebrow">{room.kind === 'mate' ? 'メイトマッチ' : 'クラスコンペ'}　コード {room.code}</p>
@@ -105,15 +114,12 @@ export function RoomScreen({ credential, onLeave }: { credential: Credential; on
     </header>
     {error && <p role="alert" className="error">{error}</p>}
 
-    {room.state === 'WAITING' && <Lobby snapshot={snapshot} isHost={isHost} joinUrl={joinUrl} send={send} />}
-    {room.state === 'COUNTDOWN' && <section className="panel countdown-panel"><p className="countdown-number">{Math.max(1, Math.ceil((untilStart ?? 0) / 1000))}</p><p>まもなく開始！</p></section>}
-    {room.state === 'RUNNING' && (isHost && credential.role === 'teacher'
-      ? <HostRace snapshot={snapshot} send={send} />
-      : <Player snapshot={snapshot} connection={connectionRef.current!} verdictSignal={verdictSignal} />)}
-    {room.state === 'COLLECTING' && (credential.role !== 'teacher' && room.settings.gradingMode === 'deferred' && !snapshot.own?.finished
-      ? <Player snapshot={snapshot} connection={connectionRef.current!} verdictSignal={verdictSignal} />
-      : <section className="panel"><h2>集計しています</h2><p>全員の結果をまとめています…</p></section>)}
-    {room.state === 'FINISHED' && <Results snapshot={snapshot} isClassTeacher={credential.role === 'teacher' && room.kind === 'class'} />}
+    {room.state === 'WAITING' && <Lobby snapshot={snapshot} isHost={isHost} joinUrl={joinUrl} send={send} connected={connected} />}
+    {countingDown && !classHost && <section className="panel countdown-panel"><p className="countdown-number">{Math.max(1, Math.ceil((untilStart ?? 0) / 1000))}</p><p>まもなく開始！</p></section>}
+    {classHost && (countingDown || room.state === 'RUNNING' || collecting) && <HostRace snapshot={snapshot} send={send} connected={connected} untilStart={untilStart ?? 0} />}
+    {showingPlayer && <Player snapshot={snapshot} connection={connectionRef.current!} verdictSignal={verdictSignal} connected={connected} serverNow={() => Date.now() + offsetRef.current} />}
+    {collecting && !classHost && !showingPlayer && <section className="panel"><h2>集計しています</h2><p>全員の結果をまとめています…</p></section>}
+    {room.state === 'FINISHED' && <Results snapshot={snapshot} isClassTeacher={classHost} />}
     {room.state === 'CANCELLED' && <section className="panel"><h2>このルームは解散しました</h2><button type="button" className="secondary-button" onClick={onLeave}>ホームへ戻る</button></section>}
     {isHost && room.state === 'RUNNING' && credential.role === 'mate-host' && <div className="play-actions"><button type="button" className="danger-button" onClick={() => { if (confirm('競技を終了しますか？')) void send({ type: 'finish' }).catch(() => {}); }}>競技を終了する</button></div>}
   </main>;
@@ -125,74 +131,131 @@ function stableSettingsJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function Lobby({ snapshot, isHost, joinUrl, send }: { snapshot: Snapshot; isHost: boolean; joinUrl: string; send: (m: Parameters<RoomConnection['send']>[0]) => Promise<unknown> }) {
+type SendRoomMessage = (message: Parameters<RoomConnection['send']>[0]) => Promise<unknown>;
+
+function Lobby({ snapshot, isHost, joinUrl, send, connected }: { snapshot: Snapshot; isHost: boolean; joinUrl: string; send: SendRoomMessage; connected: boolean }) {
   const room = snapshot.room;
   const [settings, setSettings] = useState<OrgoGameSettings>(room.settings);
   const [busy, setBusy] = useState(false);
   const participants = snapshot.participants ?? [];
-  const act = async (fn: () => Promise<unknown>) => { setBusy(true); try { await fn(); } catch { /* error shown by room */ } finally { setBusy(false); } };
-  return <div className="lobby-grid">
-    <section className="panel join-panel">
-      <h2>参加コード</h2>
-      <p className="room-code">{room.code}</p>
-      <QRCodeSVG value={joinUrl} size={180} />
-      <p className="hint">参加者 {room.participantCount} / {room.kind === 'mate' ? 4 : 50}人</p>
-      {snapshot.own && <NicknameEditor nickname={snapshot.own.nickname} disabled={busy} onSave={async (value) => { await send({ type: 'nickname', nickname: value }); }} />}
-    </section>
-    <section className="panel">
-      <h2>参加者</h2>
-      {participants.length === 0 ? <p>まだ誰も参加していません</p> : <ul className="participant-list">
-        {participants.map(p => <li key={p.id}><span>{p.nickname}</span>{isHost && snapshot.own?.id !== p.id && <button type="button" className="secondary-button small" disabled={busy} onClick={() => void act(() => send({ type: 'remove', participantId: p.id }))}>削除</button>}</li>)}
-      </ul>}
-      {isHost && <>
-        <h3>出題設定</h3>
-        <CompetitionSettingsForm value={settings} onChange={setSettings} disabled={busy} mate={room.kind === 'mate'} />
-        {stableSettingsJson(settings) !== stableSettingsJson(room.settings) && <p className="settings-hint">設定が未反映です。「設定を反映」を押してから開始してください。</p>}
+  const changed = stableSettingsJson(settings) !== stableSettingsJson(room.settings);
+  const disabled = busy || !connected;
+  const act = async (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    try { await fn(); } catch { /* error shown by room */ }
+    finally { setBusy(false); }
+  };
+
+  if (!isHost) return <section className="panel">
+    <h1>開始を待っています</h1>
+    {snapshot.own && <NicknameEditor nickname={snapshot.own.nickname} disabled={disabled} onSave={async nickname => { await send({ type: 'nickname', nickname }); }} />}
+    <p className="settings-line">{settingsSummary(room.settings)}</p>
+    <ul className="participant-list">{participants.map(p => <li key={p.id}>{p.nickname}</li>)}</ul>
+  </section>;
+
+  return <>
+    <div className="lobby-grid host-lobby">
+      <section className="panel join-panel">
+        <h1>参加コード</h1>
+        <p className="room-code">{room.code}</p>
+        <QRCodeSVG value={joinUrl} size={224} title="参加用QRコード" />
+      </section>
+      <section className="panel host-lobby-roster">
+        <h2>参加者 {room.participantCount} / {room.kind === 'mate' ? 4 : 50}人</h2>
+        {participants.length === 0 ? <p>参加を待っています</p> : <ul className="participant-list">
+          {participants.map(p => <li key={p.id}><span>{p.nickname}</span>{snapshot.own?.id !== p.id && <button type="button" className="secondary-button small" disabled={disabled} aria-label={`${p.nickname}を削除`} onClick={() => void act(() => send({ type: 'remove', participantId: p.id }))}>削除</button>}</li>)}
+        </ul>}
+        {snapshot.own && <NicknameEditor nickname={snapshot.own.nickname} disabled={disabled} onSave={async nickname => { await send({ type: 'nickname', nickname }); }} />}
+        {changed && <p className="settings-hint" role="status">設定を反映してから開始してください。</p>}
         <div className="play-actions">
-          <button type="button" className="secondary-button" disabled={busy} onClick={() => void act(() => send({ type: 'settings', settings }))}>設定を反映</button>
-          <button type="button" className="primary-action" disabled={busy || stableSettingsJson(settings) !== stableSettingsJson(room.settings) || participants.length < (room.kind === 'mate' ? 2 : 1)} onClick={() => void act(() => send({ type: 'start' }))}>開始する</button>
-          <button type="button" className="danger-button" disabled={busy} onClick={() => { if (confirm('ルームを解散しますか？')) void act(() => send({ type: 'cancel' })); }}>解散する</button>
+          <button type="button" className="primary-action" disabled={disabled || changed || participants.length < (room.kind === 'mate' ? 2 : 1)} onClick={() => { primeAudio(); void act(() => send({ type: 'start' })); }}>開始する</button>
+          <button type="button" className="danger-button" disabled={disabled} onClick={() => { if (confirm('ルームを解散しますか？')) void act(() => send({ type: 'cancel' })); }}>解散する</button>
         </div>
-      </>}
-      {!isHost && <p className="settings-line">{settingsSummary(room.settings)}</p>}
-    </section>
-  </div>;
+      </section>
+    </div>
+    <details className="panel host-settings">
+      <summary>競技設定を変更</summary>
+      <CompetitionSettingsForm value={settings} onChange={setSettings} disabled={disabled} mate={room.kind === 'mate'} />
+      <button type="button" className="secondary-button" disabled={disabled || !changed} onClick={() => void act(() => send({ type: 'settings', settings }))}>設定を反映</button>
+    </details>
+  </>;
 }
 
-function HostRace({ snapshot, send }: { snapshot: Snapshot; send: (m: Parameters<RoomConnection['send']>[0]) => Promise<unknown> }) {
+function HostRace({ snapshot, send, connected, untilStart }: { snapshot: Snapshot; send: SendRoomMessage; connected: boolean; untilStart: number }) {
   const participants = snapshot.participants ?? [];
-  const maxScore = snapshot.room.maxScore;
-  return <section className="panel">
-    <h2>進行状況</h2>
-    <ul className="race-list">
-      {participants.map(p => <li key={p.id} className="race-row">
+  const { maxScore, settings, state } = snapshot.room;
+  const deferred = settings.gradingMode === 'deferred';
+  const unit = deferred ? (settings.mode === 'four' ? '欄' : '組') : '点';
+  const collecting = state === 'COLLECTING';
+  const countingDown = state === 'COUNTDOWN';
+  const [busy, setBusy] = useState(false);
+  const [light, setLight] = useState(() => {
+    try { return localStorage.getItem('orgo-lite:host-motion') === 'light'; }
+    catch { return false; }
+  });
+  const toggleMotion = () => {
+    const next = !light;
+    setLight(next);
+    try { localStorage.setItem('orgo-lite:host-motion', next ? 'light' : 'normal'); } catch { /* motion preference is optional */ }
+  };
+  const end = async () => {
+    if (!confirm('競技を中断して終了しますか？')) return;
+    setBusy(true);
+    try { await send({ type: 'finish' }); } catch { /* error shown by room */ }
+    finally { setBusy(false); }
+  };
+  const rows = <ul className="race-list">
+    {participants.map(p => {
+      const value = deferred ? p.answeredCount : p.correctCount;
+      return <li key={p.id} className="race-row">
         <span className="race-name">{p.nickname}</span>
-        <span className="race-bar"><span className="race-fill" style={{ width: `${Math.min(100, (p.correctCount / Math.max(1, maxScore)) * 100)}%` }} /></span>
-        <span className="race-score">{snapshot.room.settings.gradingMode === 'deferred' ? `${p.answeredCount}問回答` : `${p.correctCount}点`}{p.finished ? '（終了）' : ''}</span>
-      </li>)}
-    </ul>
-    <div className="play-actions">
-      <button type="button" className="danger-button" onClick={() => { if (confirm('競技を中断して終了しますか？')) void send({ type: 'finish' }).catch(() => {}); }}>中断して終了</button>
+        <div className="race-track">
+          <progress className="race-progress" aria-label={`${p.nickname}の${deferred ? '入力済み' : '得点'}`} value={value} max={maxScore} />
+          {!collecting && <span className="race-marker" style={{ left: `${Math.min(100, value * 100 / maxScore)}%` }}>
+            <HostRunner id={p.id} color={colorForRunner(snapshot.room.code, p.joinedOrder)} goal={!deferred && value >= maxScore} stopped={false} rest={countingDown || deferred && p.finished} />
+          </span>}
+        </div>
+        <span className="race-score">{value} / {maxScore}{unit}{p.finished && <small>{deferred ? '提出済み' : '完了'}</small>}</span>
+      </li>;
+    })}
+  </ul>;
+
+  return <section className={`panel host-progress host-race${light ? ' is-light' : ''}${collecting ? ' host-collecting' : ''}`}>
+    {collecting && <CollectingParade roomId={snapshot.room.code} participants={participants} light={light} />}
+    <div className="host-progress-heading">
+      {!collecting && <h1>{countingDown ? 'まもなく開始' : '進行状況'}</h1>}
+      {countingDown && <p className="countdown-number" aria-live="off">{Math.max(1, Math.ceil(untilStart / 1000))}</p>}
+      <p>{deferred ? '提出済み' : '完了'} {participants.filter(p => p.finished).length} / {participants.length}人</p>
     </div>
+    {collecting ? <details><summary>参加者の進捗を表示</summary>{rows}</details> : rows}
+    {!collecting && <div className="play-actions">
+      <button type="button" className="secondary-button" aria-pressed={light} onClick={toggleMotion}>軽量表示 {light ? 'ON' : 'OFF'}</button>
+      {state === 'RUNNING' && <button type="button" className="danger-button" disabled={!connected || busy} onClick={() => void end()}>中断して終了</button>}
+    </div>}
   </section>;
 }
 
 function Results({ snapshot, isClassTeacher }: { snapshot: Snapshot; isClassTeacher: boolean }) {
   const results = snapshot.results;
   const [selected, setSelected] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
   if (!results) return <section className="panel"><p>結果を読み込んでいます…</p></section>;
   const fmt = (cs: number) => `${Math.floor(cs / 6000)}:${String(Math.floor(cs / 100) % 60).padStart(2, '0')}.${String(cs % 100).padStart(2, '0')}`;
+  const ranking = results.ranking ?? [];
+  const visibleRanking = isClassTeacher && !showAll ? ranking.filter(row => row.rank <= 5) : ranking;
   return <div className="results-stack">
     {results.own && <section className="panel own-result">
       <h2>{results.own.rank}位　{results.own.correctCount}点</h2>
       <p>タイム {fmt(results.own.elapsedCs)}{results.own.finalSyncUnconfirmed && '（最終同期未確認）'}</p>
     </section>}
     <section className="panel">
-      <h2>ランキング</h2>
-      <ol className="ranking-list">
-        {(results.ranking ?? []).map(r => <li key={r.nickname + r.rank}><span>{r.rank}位　{r.nickname}</span><span>{r.correctCount}点　{fmt(r.elapsedCs)}</span></li>)}
+      <h2>{isClassTeacher ? '競技結果' : 'ランキング'}</h2>
+      {isClassTeacher && <p>{snapshot.room.endReason === 'interrupted' ? '中断終了' : '競技終了'} · {ranking.length}人</p>}
+      <ol id="room-ranking" className="ranking-list">
+        {visibleRanking.map(r => <li key={r.nickname + r.rank}><span>{r.rank}位　{r.nickname}</span><span>{r.correctCount}点　{fmt(r.elapsedCs)}{r.finalSyncUnconfirmed && <small>最終同期未確認</small>}</span></li>)}
       </ol>
       {results.averageCorrectCount !== undefined && <p>平均 {results.averageCorrectCount.toFixed(1)}点</p>}
+      {isClassTeacher && ranking.some(r => r.rank > 5) && <button type="button" className="secondary-button" aria-expanded={showAll} aria-controls="room-ranking" onClick={() => setShowAll(current => !current)}>{showAll ? '上位5位まで表示' : '全員の結果を表示'}</button>}
     </section>
     {results.questions && <section className="panel"><h2>自分の復習</h2><ReviewList questions={results.questions} /></section>}
     {isClassTeacher && results.reviews && <section className="panel">

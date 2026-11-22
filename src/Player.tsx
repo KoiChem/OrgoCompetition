@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { COMPOUND_BY_ID, type AnswerFieldId, type PublicQuestion } from '../game/types';
-import type { ClientMessage, Snapshot, Verdict } from './protocol';
+import type { ClientMessage, ServerMessage, Snapshot, Verdict } from './protocol';
 import type { RoomConnection } from './socket';
 import { playAnswerSound } from './host-sound';
 import { ReopenSubmission } from './ReopenSubmission';
 import { mergeDrafts, readDrafts, writeDraft } from './drafts';
 
-type Send = (message: ClientMessage) => Promise<unknown>;
+type Send = (message: ClientMessage) => Promise<ServerMessage>;
 
 function useSender(connection: RoomConnection, snapshot: Snapshot) {
   const serverSeq = snapshot.own?.lastSeq ?? 0;
@@ -34,9 +34,10 @@ function FourPromptView({ question }: { question: PublicQuestion }) {
   </div>;
 }
 
-function PairBoard({ question, locked, selected, onSelectStructure, onSelectName }: {
+function PairBoard({ question, locked, selected, disabled, onSelectStructure, onSelectName }: {
   question: PublicQuestion;
   locked: Record<string, string>;
+  disabled?: boolean;
   selected: { structure: string | null; name: string | null };
   onSelectStructure(id: string): void;
   onSelectName(id: string): void;
@@ -48,37 +49,50 @@ function PairBoard({ question, locked, selected, onSelectStructure, onSelectName
   return <div className="pair-board">
     <div className="pair-column">
       <p className="pair-column-label">構造</p>
-      {p.structures.map(id => <button key={id} type="button" className="pair-card structure-card" aria-pressed={selected.structure === id} disabled={usedStructures.has(id)} onClick={() => onSelectStructure(id)}>
-        <img className="structure-img" src={`/${COMPOUND_BY_ID.get(id)?.structureSvg}`} alt={COMPOUND_BY_ID.get(id)?.nameJa ?? id} />
+      {p.structures.map((id, index) => <button key={id} type="button" className="pair-card structure-card" aria-pressed={selected.structure === id} disabled={disabled || usedStructures.has(id)} onClick={() => onSelectStructure(id)}>
+        <img className="structure-img" src={`/${COMPOUND_BY_ID.get(id)?.structureSvg}`} alt={`構造 ${index + 1}`} />
       </button>)}
     </div>
     <div className="pair-column">
       <p className="pair-column-label">名前</p>
-      {p.names.map(id => <button key={id} type="button" className="pair-card name-card" aria-pressed={selected.name === id} disabled={usedNames.has(id)} onClick={() => onSelectName(id)}>
+      {p.names.map(id => <button key={id} type="button" className="pair-card name-card" aria-pressed={selected.name === id} disabled={disabled || usedNames.has(id)} onClick={() => onSelectName(id)}>
         {COMPOUND_BY_ID.get(id)?.nameJa ?? id}
       </button>)}
     </div>
   </div>;
 }
 
-export function Player({ snapshot, connection, verdictSignal }: { snapshot: Snapshot; connection: RoomConnection; verdictSignal: { verdict: Verdict; n: number } | null }) {
+export function Player({ snapshot, connection, verdictSignal, connected, serverNow }: {
+  snapshot: Snapshot;
+  connection: RoomConnection;
+  verdictSignal: { verdict: Verdict; n: number } | null;
+  connected: boolean;
+  serverNow(): number;
+}) {
   const send = useSender(connection, snapshot);
-  const settings = snapshot.room.settings;
-  if (settings.gradingMode === 'deferred') return <DeferredPlayer snapshot={snapshot} send={send} />;
-  return <ImmediatePlayer snapshot={snapshot} send={send} verdictSignal={verdictSignal} onReview={() => connection.send({ type: 'review' })} />;
+  if (snapshot.room.settings.gradingMode === 'deferred') {
+    return <DeferredPlayer snapshot={snapshot} send={send} connected={connected} serverNow={serverNow} />;
+  }
+  return <ImmediatePlayer snapshot={snapshot} send={send} verdictSignal={verdictSignal} connected={connected}
+    onReview={() => connection.send({ type: 'review' }).then(response => response.state?.review)} />;
 }
 
-function ImmediatePlayer({ snapshot, send, verdictSignal, onReview }: { snapshot: Snapshot; send: Send; verdictSignal: { verdict: Verdict; n: number } | null; onReview(): Promise<unknown> }) {
-  const question = snapshot.question;
+function ImmediatePlayer({ snapshot, send, verdictSignal, connected, onReview }: {
+  snapshot: Snapshot; send: Send; verdictSignal: { verdict: Verdict; n: number } | null;
+  connected: boolean; onReview(): Promise<Snapshot['review']>;
+}) {
+  const [review, setReview] = useState<Snapshot['review']>();
+  const [targetId, setTargetId] = useState<string | null>(null);
+  const question = review?.questions.find(item => item.id === targetId) ?? snapshot.question;
+  const frontier = snapshot.own?.questionIndex ?? 0;
   const [feedback, setFeedback] = useState('');
   const [sel, setSel] = useState<{ structure: string | null; name: string | null }>({ structure: null, name: null });
-  const [locked, setLocked] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [showReview, setShowReview] = useState(false);
   const lastVerdictN = useRef(0);
   const questionId = question?.id;
 
-  useEffect(() => { setSel({ structure: null, name: null }); setLocked({}); setFeedback(''); }, [questionId]);
+  useEffect(() => { setSel({ structure: null, name: null }); setFeedback(''); }, [questionId]);
   useEffect(() => {
     if (!verdictSignal || verdictSignal.n === lastVerdictN.current) return;
     lastVerdictN.current = verdictSignal.n;
@@ -87,23 +101,56 @@ function ImmediatePlayer({ snapshot, send, verdictSignal, onReview }: { snapshot
     if (v.passed) setFeedback('パスしました');
     else if (v.correct) {
       setFeedback('正解！');
-      if (question && question.prompt.kind === 'pair') {
-        // The pair that was just confirmed is locked locally for display.
-        setLocked(prev => (sel.structure && sel.name && !prev[v.fieldId] ? { ...prev, [v.fieldId]: `${sel.structure}=${sel.name}` } : prev));
-        setSel({ structure: null, name: null });
-      }
+      setSel({ structure: null, name: null });
     } else setFeedback('ちがうみたい。もう一度考えてみよう');
   }, [verdictSignal, question, sel]);
 
+  useEffect(() => {
+    if (question || frontier === 0 || !connected) return;
+    let live = true;
+    void onReview().then(value => { if (live) setReview(value); }).catch(() => {});
+    return () => { live = false; };
+    // Review is refreshed when the frontier first reaches the end.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [question?.id, frontier, connected]);
+
   const own = snapshot.own;
   if (own?.finished) return <section className="panel"><h2>おつかれさま！</h2><p>全問終わりました。結果の発表を待ってね。</p></section>;
-  if (!question) return <section className="panel"><p role="status">問題を準備しています…</p></section>;
+  const openReview = async () => {
+    setShowReview(true); setBusy(true); setTargetId(null);
+    try { setReview(await onReview()); } catch { setFeedback('問題一覧を取得できませんでした'); }
+    finally { setBusy(false); }
+  };
+  if (showReview || !question) return <section className="panel">
+    <h2>全解答確認</h2>
+    {feedback && <p role="status">{feedback}</p>}
+    {!review && <button type="button" className="secondary-button" disabled={busy || !connected} onClick={() => void openReview()}>これまでの問題を確認</button>}
+    {review && <ol className="review-list">{review.questions.slice(0, review.frontier).map(q => {
+      const retry = q.fields.some(f => ['passed', 'passedRetry'].includes(review.fields[`${q.id}:${f.id}`]));
+      return <li className="review-item" key={q.id}>
+        <span>{q.ordinal + 1}問目　{retry ? 'パス・再解答できます' : '正解'}</span>
+        {retry && <button type="button" className="secondary-button" disabled={!connected || busy} onClick={() => { setTargetId(q.id); setShowReview(false); }}>この問題に戻る</button>}
+      </li>;
+    })}</ol>}
+    {snapshot.question && <div className="play-actions"><button type="button" className="secondary-button" onClick={() => { setTargetId(null); setShowReview(false); }}>現在の問題へ</button></div>}
+  </section>;
 
-  const resolved = new Set(question.progress.resolvedFieldIds);
-  const unresolvedFields = question.fields.filter(f => !resolved.has(f.id));
+  const fieldState = (fieldId: AnswerFieldId) => targetId ? review?.fields[`${question.id}:${fieldId}`] : question.progress.fieldStates?.[fieldId];
+  const locked = Object.fromEntries(question.fields.filter(f => fieldState(f.id) === 'correct')
+    .map(f => [f.id, snapshot.drafts?.[`${question.id}:${f.id}`] ?? '']).filter(([, value]) => value));
+  const unresolvedFields = question.fields.filter(f => targetId ? fieldState(f.id) !== 'correct' : !question.progress.resolvedFieldIds.includes(f.id));
   const act = async (message: ClientMessage) => {
     setBusy(true);
-    try { await send(message); } catch { /* room screen shows the error */ } finally { setBusy(false); }
+    try {
+      await send(message);
+      if (targetId) {
+        const refreshed = await onReview();
+        setReview(refreshed);
+        if (!refreshed?.questions.find(q => q.id === targetId)?.fields.some(f => refreshed.fields[`${targetId}:${f.id}`] !== 'correct')) {
+          setTargetId(null); setShowReview(true);
+        }
+      }
+    } catch { /* room screen shows the error */ } finally { setBusy(false); }
   };
   const answerFour = (id: string) => void act({ type: 'answer', questionId: question.id, fieldId: 'choice', value: id });
   const confirmPair = () => {
@@ -120,194 +167,255 @@ function ImmediatePlayer({ snapshot, send, verdictSignal, onReview }: { snapshot
     {question.prompt.kind === 'four' ? <>
       <FourPromptView question={question} />
       <div className="choice-list">
-        {question.prompt.choices.map(c => <button key={c.id} type="button" className="answer-choice" disabled={busy} onClick={() => answerFour(c.id)}>
+        {question.prompt.choices.map(c => <button key={c.id} type="button" className="answer-choice" disabled={busy || !connected} onClick={() => answerFour(c.id)}>
           {c.structure ? <img className="structure-img" src={`/${c.structure}`} alt="選択肢の構造" /> : c.name}
         </button>)}
       </div>
     </> : <>
       <p className="prompt-label">{question.fields.length === 2 ? '正しいペアを2組つくろう' : '正しいペアを1組つくろう'}（あと{unresolvedFields.length}組）</p>
-      <PairBoard question={question} locked={locked} selected={sel} onSelectStructure={id => setSel(s => ({ ...s, structure: id }))} onSelectName={id => setSel(s => ({ ...s, name: id }))} />
+      <PairBoard question={question} locked={locked} selected={sel} disabled={busy || !connected} onSelectStructure={id => setSel(s => ({ ...s, structure: id }))} onSelectName={id => setSel(s => ({ ...s, name: id }))} />
       <div className="play-actions">
-        <button type="button" className="primary-action" disabled={busy || !sel.structure || !sel.name} onClick={confirmPair}>このペアで確定</button>
+        <button type="button" className="primary-action" disabled={busy || !connected || !sel.structure || !sel.name} onClick={confirmPair}>このペアで確定</button>
       </div>
     </>}
     <div className="play-actions">
-      <button type="button" className="secondary-button" disabled={busy} onClick={pass}>パス</button>
-      {(snapshot.own?.questionIndex ?? 0) > 0 && <button type="button" className="secondary-button" onClick={() => { setShowReview(r => !r); if (!showReview) void onReview().catch(() => {}); }}>これまでの問題</button>}
+      {!targetId && <button type="button" className="secondary-button" disabled={busy || !connected} onClick={pass}>パス</button>}
+      {(snapshot.own?.questionIndex ?? 0) > 0 && <button type="button" className="secondary-button" disabled={busy || !connected} onClick={() => void openReview()}>これまでの問題</button>}
     </div>
     {feedback && <p className="verdict" role="status">{feedback}</p>}
-    {showReview && snapshot.review && <ol className="mini-review">
-      {snapshot.review.questions.slice(0, snapshot.review.frontier).map(q => <li key={q.id}>
-        {q.ordinal + 1}問目：{q.fields.map(f => <span key={f.id} className="mini-review-state">{snapshot.review!.fields[`${q.id}:${f.id}`] === 'correct' ? '正解' : snapshot.review!.fields[`${q.id}:${f.id}`] === 'passed' ? 'パス' : '再挑戦中'}</span>)}
-      </li>)}
-    </ol>}
   </section>;
 }
 
-function DeferredPlayer({ snapshot, send }: { snapshot: Snapshot; send: Send }) {
+function PairAnswer({ value, question }: { value: string; question: PublicQuestion }) {
+  const [structure, name] = value.split('=');
+  const number = question.prompt.kind === 'pair' ? question.prompt.structures.indexOf(structure) + 1 : 0;
+  return <span className="pair-answer">
+    <img className="structure-img small" src={`/${COMPOUND_BY_ID.get(structure)?.structureSvg}`} alt={`構造 ${number}`} />
+    <span>{COMPOUND_BY_ID.get(name)?.nameJa}</span>
+  </span>;
+}
+
+function DeferredPlayer({ snapshot, send, connected, serverNow }: {
+  snapshot: Snapshot; send: Send; connected: boolean; serverNow(): number;
+}) {
   const deferred = snapshot.deferred;
   const [selections, setSelections] = useState<Record<string, string>>({});
-  const [updatedAt, setUpdatedAt] = useState<Record<string, number>>({});
   const [index, setIndex] = useState(0);
-  const [maxVisited, setMaxVisited] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
   const [syncError, setSyncError] = useState('');
   const [sel, setSel] = useState<{ structure: string | null; name: string | null }>({ structure: null, name: null });
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const selectionsRef = useRef(selections); selectionsRef.current = selections;
-  const updatedAtRef = useRef(updatedAt); updatedAtRef.current = updatedAt;
-  const maxVisitedRef = useRef(0);
+  const selectionsRef = useRef(selections);
+  const updatedAtRef = useRef<Record<string, number>>({});
+  const maxVisitedRef = useRef(snapshot.own?.advancedQuestionCount ?? 0);
   const flushChain = useRef<Promise<void>>(Promise.resolve());
-  const collectingHandled = useRef(false);
+  const submitting = useRef(false);
+  const restoreFailed = useRef(false);
+  const lastAcknowledged = useRef<Snapshot | undefined>(undefined);
+  const snapshotRef = useRef(snapshot); snapshotRef.current = snapshot;
   const code = snapshot.room.code, participantId = snapshot.own?.id ?? '';
   const collecting = snapshot.room.state === 'COLLECTING';
+  const cutoff = snapshot.room.cutoffAtMs ?? snapshot.room.deadlineAtMs ?? 0;
+  const canEdit = ready && !collecting && !busy && serverNow() < cutoff;
+  const canEditNow = () => ready && !collecting && !submitting.current && serverNow() < cutoff;
 
   useEffect(() => {
     if (!deferred) return;
     let live = true;
-    readDrafts(code, participantId).then(local => {
+    const restore = (local: Awaited<ReturnType<typeof readDrafts>>) => {
       if (!live) return;
-      setSelections(mergeDrafts(deferred.drafts, local, Date.now(), code));
-      const times: Record<string, number> = {};
-      for (const r of local) times[r.question] = r.updatedAtMs;
-      setUpdatedAt(times);
-    }).catch(() => setSelections({ ...deferred.drafts }));
-    return () => { live = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deferred?.questions.length, code, participantId]);
-
-  // Flush contract (same as IonicLite): always send the FULL current answer
-  // set as one batch and await its ACK. Sends are serialized through a chain
-  // so a submit can never overtake an unsent draft.
-  const flushNow = (): Promise<void> => {
-    const run = async () => {
-      const entries = Object.entries(selectionsRef.current)
-        .filter(([, v]) => v)
-        .map(([key, value]) => {
-          const [questionId, fieldId] = key.split(':');
-          return { questionId, fieldId: fieldId as AnswerFieldId, value };
-        });
-      if (!entries.length) return;
-      let captured = Math.max(0, ...entries.map(e => updatedAtRef.current[`${e.questionId}:${e.fieldId}`] ?? 0));
-      if (snapshot.room.state === 'COLLECTING') {
-        const lo = snapshot.room.startAtMs ?? 0;
-        const hi = snapshot.room.cutoffAtMs ?? snapshot.room.deadlineAtMs ?? captured;
-        captured = Math.min(Math.max(captured, lo), hi);
-      }
-      await send({ type: 'draft', answers: entries, advancedQuestionCount: maxVisitedRef.current, ...(captured ? { capturedAtMs: captured } : {}) });
+      const state = snapshotRef.current;
+      const restored = mergeDrafts(state.deferred?.drafts ?? {}, local, Date.now(), code);
+      selectionsRef.current = restored;
+      updatedAtRef.current = Object.fromEntries(local.map(r => [r.question, r.updatedAtMs]));
+      setSelections(restored);
+      setReady(true);
     };
-    const p = flushChain.current.then(run, run);
-    flushChain.current = p.catch(() => {});
-    return p;
+    restoreFailed.current = false;
+    void readDrafts(code, participantId).then(restore).catch(() => {
+      if (!live) return;
+      restoreFailed.current = true;
+      setSyncError('この端末の下書きを読み込めませんでした');
+      restore([]);
+    });
+    return () => { live = false; };
+    // Reopening after submission restores the latest saved answers again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [Boolean(deferred), code, participantId]);
+
+  useEffect(() => () => { if (draftTimer.current) clearTimeout(draftTimer.current); }, []);
+
+  const flush = (): Promise<void> => {
+    const run = async () => {
+      const state = snapshotRef.current;
+      const previous = lastAcknowledged.current;
+      const acknowledged = previous && (previous.own?.lastSeq ?? 0) > (state.own?.lastSeq ?? 0)
+        ? previous.deferred?.drafts ?? {}
+        : state.deferred?.drafts ?? {};
+      const room = state.room;
+      const end = room.cutoffAtMs ?? room.deadlineAtMs ?? 0;
+      const edits = Object.entries(selectionsRef.current).filter(([key, value]) => {
+        const time = updatedAtRef.current[key];
+        return time >= (room.startAtMs ?? 0) && time < end && value !== (acknowledged[key] ?? '');
+      });
+      if (!edits.length) return;
+      const answers = edits.map(([key, value]) => {
+        const [questionId, fieldId] = key.split(':');
+        return { questionId, fieldId: fieldId as AnswerFieldId, value };
+      });
+      const ack = await send({
+        type: 'draft', answers, advancedQuestionCount: maxVisitedRef.current,
+        capturedAtMs: Math.max(...edits.map(([key]) => updatedAtRef.current[key])),
+      });
+      lastAcknowledged.current = ack.state;
+    };
+    const result = flushChain.current.then(run);
+    flushChain.current = result.catch(() => {});
+    return result;
   };
-  const flushRef = useRef(flushNow); flushRef.current = flushNow;
+  const flushRef = useRef(flush); flushRef.current = flush;
 
   const scheduleFlush = () => {
     if (draftTimer.current) clearTimeout(draftTimer.current);
     draftTimer.current = setTimeout(() => {
+      if (submitting.current) return;
       void flushRef.current().catch(() => setSyncError('回答を送信できませんでした。通信状態を確認してください'));
     }, 350);
   };
 
-  // COLLECTING recovery: once the room enters COLLECTING, flush whatever was
-  // edited before the deadline and file the final submission for grading.
-  useEffect(() => {
-    if (!collecting || snapshot.own?.finished || collectingHandled.current) return;
-    collectingHandled.current = true;
+  const submit = async (final: boolean) => {
+    const capturedAtMs = serverNow();
+    if (!connected || submitting.current || (!final && !canEditNow())) return;
     if (draftTimer.current) clearTimeout(draftTimer.current);
-    void (async () => {
-      try { await flushRef.current(); await send({ type: 'submit', final: true }); }
-      catch { setSyncError('締切前の回答を回収できませんでした'); }
-    })();
+    submitting.current = true;
+    setBusy(true);
+    setSyncError('');
+    try {
+      await flushRef.current();
+      await send({ type: 'submit', ...(final ? { final: true } : { capturedAtMs }) });
+    } catch {
+      setSyncError(final ? '締切前の回答を回収できませんでした' : '提出できませんでした。通信状態を確認して、もう一度提出してください');
+    } finally {
+      submitting.current = false;
+      setBusy(false);
+    }
+  };
+  const submitRef = useRef(submit); submitRef.current = submit;
+
+  useEffect(() => {
+    if (!ready || !connected || snapshot.own?.finished) return;
+    if (!collecting) {
+      void flushRef.current().catch(() => setSyncError('通信が回復したら回答を再送信します'));
+      return;
+    }
+    const recover = () => {
+      if (!restoreFailed.current && serverNow() < cutoff + 3000 && !snapshotRef.current.own?.finished) void submitRef.current(true);
+    };
+    recover();
+    const retry = setInterval(recover, 250);
+    return () => clearInterval(retry);
+    // serverNow is read when each retry runs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collecting, snapshot.own?.finished]);
+  }, [ready, connected, collecting, cutoff, snapshot.own?.finished]);
 
   const own = snapshot.own;
   if (own?.finished) {
     return <section className="panel">
       <h2>提出済み</h2>
       <p>結果の発表を待ってね。</p>
-      {snapshot.room.kind === 'class' && snapshot.room.state === 'RUNNING' && <ReopenSubmission disabled={busy} onConfirm={async () => { setBusy(true); try { await send({ type: 'reopen' }); } finally { setBusy(false); } }} />}
+      {snapshot.room.kind === 'class' && snapshot.room.state === 'RUNNING' && <ReopenSubmission disabled={busy || !connected} onConfirm={async () => { setBusy(true); try { await send({ type: 'reopen' }); } finally { setBusy(false); } }} />}
     </section>;
   }
-  if (!deferred || !deferred.questions.length) return <section className="panel"><p role="status">問題を準備しています…</p></section>;
+  if (collecting) return <section className="panel"><h2>集計しています</h2><p role="status">締切前の回答を回収しています…</p>{syncError && <p role="alert" className="error">{syncError}</p>}</section>;
+  if (!ready || !deferred?.questions.length) return <section className="panel"><p role="status">問題と解答を準備しています…</p></section>;
   const questions = deferred.questions;
   const question = questions[Math.min(index, questions.length - 1)];
 
   const setValue = (fieldId: AnswerFieldId, value: string) => {
-    if (collecting) return;
+    if (!canEditNow()) return;
     const key = `${question.id}:${fieldId}`;
-    const now = Date.now();
-    setSelections(prev => ({ ...prev, [key]: value }));
-    setUpdatedAt(prev => ({ ...prev, [key]: now }));
-    void writeDraft({ key: `${code}:${participantId}:${key}`, room: code, participant: participantId, question: key, value, updatedAtMs: now, expiresAtMs: now + 7 * 24 * 3600 * 1000 }).catch(() => {});
-    scheduleFlush();
+    const now = serverNow();
+    const next = { ...selectionsRef.current, [key]: value };
+    selectionsRef.current = next;
+    updatedAtRef.current[key] = now;
+    setSelections(next);
+    void writeDraft({ key: `${code}:${participantId}:${key}`, room: code, participant: participantId, question: key, value, updatedAtMs: now, expiresAtMs: Date.now() + 7 * 24 * 3600 * 1000 })
+      .catch(() => setSyncError('この端末に回答を保存できませんでした。通信状態を確認してください'));
+    if (connected) scheduleFlush();
   };
   const goto = (next: number) => {
+    if (!canEditNow()) return;
     const clamped = Math.max(0, Math.min(questions.length - 1, next));
     setIndex(clamped); setSel({ structure: null, name: null });
-    const visited = Math.max(maxVisited, clamped);
-    setMaxVisited(visited); maxVisitedRef.current = visited;
+    maxVisitedRef.current = Math.max(maxVisitedRef.current, clamped);
   };
 
-  const lockedFor = (q: PublicQuestion) => Object.fromEntries(q.fields.map(f => [f.id, selections[`${q.id}:${f.id}`]]).filter(([, v]) => v));
-  const pairSelectionReady = sel.structure && sel.name;
+  const locked = Object.fromEntries(question.fields.map(f => [f.id, selections[`${question.id}:${f.id}`]]).filter(([, value]) => value));
+  const emptyField = question.fields.find(f => !selections[`${question.id}:${f.id}`]);
   const assignPair = () => {
-    if (!pairSelectionReady) return;
-    const empty = question.fields.find(f => !selections[`${question.id}:${f.id}`]);
-    if (!empty) return;
-    setValue(empty.id, `${sel.structure}=${sel.name}`);
+    if (!emptyField || !sel.structure || !sel.name || !canEditNow()) return;
+    setValue(emptyField.id, `${sel.structure}=${sel.name}`);
     setSel({ structure: null, name: null });
   };
-  const answered = questions.filter(q => q.fields.some(f => selections[`${q.id}:${f.id}`])).length;
+  const answered = questions.filter(q => q.fields.every(f => selections[`${q.id}:${f.id}`])).length;
+  const error = syncError && <p role="alert" className="error">{syncError}</p>;
 
-  const submit = async () => {
-    if (draftTimer.current) clearTimeout(draftTimer.current);
-    setBusy(true); setSyncError('');
-    try {
-      await flushNow();
-      await send({ type: 'submit' });
-    } catch {
-      setSyncError('提出できませんでした。通信状態を確認して、もう一度提出してください');
-    } finally { setBusy(false); }
-  };
+  if (reviewing) return <section className="panel play-panel">
+    <h2>全解答確認</h2>
+    <p>回答済み {answered}問 / {questions.length}問</p>
+    <ol className="review-list">{questions.map((q, i) => <li className="review-item" key={q.id}>
+      <h3>{i + 1}問目</h3>
+      {q.fields.map(f => {
+        const value = selections[`${q.id}:${f.id}`];
+        if (!value) return <p key={f.id}>未回答</p>;
+        if (q.prompt.kind === 'pair') return <div key={f.id}><PairAnswer value={value} question={q} /></div>;
+        const choice = q.prompt.choices.find(option => option.id === value);
+        return <p key={f.id}>{choice?.structure ? <img className="structure-img small" src={`/${choice.structure}`} alt="選んだ構造" /> : choice?.name}</p>;
+      })}
+      <button type="button" className="secondary-button" disabled={!canEdit} onClick={() => { goto(i); setReviewing(false); }}>この問題に戻る</button>
+    </li>)}</ol>
+    {error}
+    <div className="play-actions">
+      <button type="button" className="secondary-button" disabled={!canEdit} onClick={() => setReviewing(false)}>解答に戻る</button>
+      <button type="button" className="primary-action" disabled={!connected || !canEdit} onClick={() => void submit(false)}>{busy ? '送信中…' : '提出する'}</button>
+    </div>
+  </section>;
 
   return <section className="panel play-panel">
     <p className="question-progress">{question.ordinal + 1}問目 / {questions.length}問　回答済み {answered}問</p>
-    {collecting && <p role="status">時間切れです。締切前の回答を回収しています…</p>}
     {question.prompt.kind === 'four' ? <>
       <FourPromptView question={question} />
       <div className="choice-list">
-        {question.prompt.choices.map(c => {
+        {question.prompt.choices.map((c, i) => {
           const current = selections[`${question.id}:choice`] === c.id;
-          return <button key={c.id} type="button" className="answer-choice" aria-pressed={current} disabled={collecting} onClick={() => setValue('choice', current ? '' : c.id)}>
-            {c.structure ? <img className="structure-img" src={`/${c.structure}`} alt="選択肢の構造" /> : c.name}
+          return <button key={c.id} type="button" className="answer-choice" aria-pressed={current} disabled={!canEdit} onClick={() => setValue('choice', current ? '' : c.id)}>
+            {c.structure ? <img className="structure-img" src={`/${c.structure}`} alt={`選択肢 ${i + 1} の構造`} /> : c.name}
           </button>;
         })}
       </div>
     </> : <>
       <p className="prompt-label">{question.fields.length === 2 ? '正しいペアを2組つくろう' : '正しいペアを1組つくろう'}</p>
-      <div className="pair-slots">
-        {question.fields.map(f => {
-          const v = selections[`${question.id}:${f.id}`];
-          return <button key={f.id} type="button" className="pair-slot" disabled={!v || collecting} onClick={() => setValue(f.id, '')}>
-            {v ? `${COMPOUND_BY_ID.get(v.split('=')[0])?.nameJa} ＝ ${COMPOUND_BY_ID.get(v.split('=')[1])?.nameJa}（タップで消す）` : 'ペア未設定'}
-          </button>;
-        })}
-      </div>
-      <PairBoard question={question} locked={lockedFor(question)} selected={sel} onSelectStructure={id => setSel(s => ({ ...s, structure: id }))} onSelectName={id => setSel(s => ({ ...s, name: id }))} />
+      <div className="pair-slots">{question.fields.map(f => {
+        const value = selections[`${question.id}:${f.id}`];
+        return <button key={f.id} type="button" className="pair-slot" disabled={!value || !canEdit} onClick={() => setValue(f.id, '')}>
+          {value ? <><PairAnswer value={value} question={question} />（タップで消す）</> : 'ペア未設定'}
+        </button>;
+      })}</div>
+      <PairBoard question={question} locked={locked} selected={sel} disabled={!canEdit} onSelectStructure={id => setSel(s => ({ ...s, structure: id }))} onSelectName={id => setSel(s => ({ ...s, name: id }))} />
       <div className="play-actions">
-        <button type="button" className="primary-action" disabled={!pairSelectionReady || collecting} onClick={assignPair}>ペアにする</button>
+        <button type="button" className="primary-action" disabled={!canEdit || !emptyField || !sel.structure || !sel.name} onClick={assignPair}>ペアにする</button>
       </div>
     </>}
     <div className="play-actions pager">
-      <button type="button" className="secondary-button" disabled={index === 0} onClick={() => goto(index - 1)}>前の問題</button>
-      <button type="button" className="secondary-button" disabled={index >= questions.length - 1} onClick={() => goto(index + 1)}>次の問題</button>
+      <button type="button" className="secondary-button" disabled={!canEdit || index === 0} onClick={() => goto(index - 1)}>前の問題</button>
+      <button type="button" className="secondary-button" disabled={!canEdit || index >= questions.length - 1} onClick={() => goto(index + 1)}>次の問題</button>
     </div>
     <div className="question-dots">
-      {questions.map((q, i) => <button key={q.id} type="button" className="dot" aria-pressed={i === index} aria-label={`${i + 1}問目`} onClick={() => goto(i)}>{q.fields.some(f => selections[`${q.id}:${f.id}`]) ? '●' : '○'}</button>)}
+      {questions.map((q, i) => <button key={q.id} type="button" className="dot" disabled={!canEdit} aria-pressed={i === index} aria-label={`${i + 1}問目`} onClick={() => goto(i)}>{q.fields.every(f => selections[`${q.id}:${f.id}`]) ? '●' : '○'}</button>)}
     </div>
-    {syncError && <p role="alert" className="error">{syncError}</p>}
-    {!collecting && <button type="button" className="primary-action submit-action" disabled={busy} onClick={() => void submit()}>{busy ? '送信中…' : '提出する'}</button>}
+    {error}
+    <button type="button" className="secondary-button" disabled={!canEdit} onClick={() => setReviewing(true)}>全解答確認</button>
   </section>;
 }

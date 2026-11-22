@@ -41,8 +41,8 @@ export async function fixture(authenticated = true, outbound?: (request: Request
     const actual = await runtime.unsafeGetDurableObjectStorage('orgo-test', 'OrgoRoom', { name: code });
     return { exec: async (...args: Parameters<typeof actual.exec>) => ({ rows: await actual.exec(...args) }) };
   };
-  const connect = async (code: string) => {
-    const response = await fetch(`/api/rooms/${code}/socket`, { headers: { upgrade: 'websocket', origin: 'https://lite.test' } });
+  const connect = async (code: string, ip?: string) => {
+    const response = await fetch(`/api/rooms/${code}/socket`, { headers: { upgrade: 'websocket', origin: 'https://lite.test', ...(ip ? { 'cf-connecting-ip': ip } : {}) } });
     const socket = response.webSocket!;
     if (!socket) throw new Error(`Upgrade failed ${response.status}: ${await response.text()}`);
     socket.accept();

@@ -168,3 +168,62 @@ it('applies lobby settings changes before start and rejects them after start', a
   expect(rejected.code).toBe('not_waiting');
   await f.runtime.dispose();
 }, 30000);
+
+it('admits and reconnects 50 classroom participants behind one network', async () => {
+  const f = await fixture();
+  try {
+    const { data } = await f.create();
+    const ip = '192.0.2.1';
+    const students = Array.from({ length: 50 }, (_, i) => credentials(`生徒${i + 1}`));
+    const clients = await Promise.all(students.map(async student => {
+      const info = await f.fetch(`/api/rooms/${data.code}/info`, { headers: { 'cf-connecting-ip': ip } });
+      expect(info.status).toBe(200);
+      const client = await f.connect(data.code, ip);
+      expect((await client.request(student)).type).toBe('ack');
+      return client;
+    }));
+    clients.forEach(client => client.socket.close());
+    await Promise.all(students.map(async student => {
+      const reconnected = await f.connect(data.code, ip);
+      const result = await reconnected.request(student);
+      expect(result.state.room.participantCount).toBe(50);
+      expect(result.state.own.id).toBe(student.participantId);
+    }));
+  } finally {
+    await f.runtime.dispose();
+  }
+}, 30000);
+
+it('collects a cleared draft at the cutoff and grades unanswered fields accurately', async () => {
+  const f = await fixture();
+  try {
+    const { data } = await f.create({ ...settings, gradingMode: 'deferred' });
+    const teacher = await f.connect(data.code);
+    await teacher.request(teacherHello(data.token));
+    const student = await f.connect(data.code);
+    await student.request(credentials('締切テスト'));
+    await teacher.request({ type: 'start' });
+
+    const store = await f.storage(data.code);
+    const start = Date.now() - 1000;
+    await store.exec('UPDATE room SET start_at=?', start);
+    const [question] = await questionsOf(f, data.code);
+    const draft = { questionId: question.id, fieldId: 'choice', value: question.answer.targetId };
+    expect((await student.request({ type: 'draft', seq: 1, answers: [draft] })).type).toBe('ack');
+
+    const stopped = await teacher.request({ type: 'finish' });
+    expect(stopped.state.room.state).toBe('COLLECTING');
+    const cutoff = stopped.state.room.cutoffAtMs;
+    const clear = { ...draft, value: '' };
+    const late = await student.request({ type: 'draft', seq: 2, capturedAtMs: cutoff + 1, answers: [clear] });
+    expect(late.code).toBe('not_running');
+    expect((await student.request({ type: 'draft', seq: 2, capturedAtMs: cutoff, answers: [clear] })).type).toBe('ack');
+    const result = await student.request({ type: 'submit', seq: 3, final: true });
+    expect(result.state.room.state).toBe('FINISHED');
+    expect(result.state.results.own.correctCount).toBe(0);
+    expect(result.state.results.own.finalSyncUnconfirmed).toBe(false);
+    expect(result.state.results.questions[0].fields[0].state).toBe('unanswered');
+  } finally {
+    await f.runtime.dispose();
+  }
+}, 30000);
