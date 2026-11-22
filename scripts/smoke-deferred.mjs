@@ -36,7 +36,7 @@ try {
   await guest.getByRole('button', { name: '参加する' }).click();
   await guest.locator('.participant-list li').first().waitFor({ timeout: 10000 });
   await host.locator('.participant-list li').nth(1).waitFor({ timeout: 10000 });
-  await host.getByRole('button', { name: '開始する' }).click();
+  await host.getByRole('button', { name: '5秒後に開始' }).click();
 
   // Deferred player: answer ALL 5 questions rapidly, then submit immediately.
   // The server must receive all five answers before submit, including a later clear.

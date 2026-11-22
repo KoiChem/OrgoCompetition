@@ -10,6 +10,7 @@ export function TeacherArea({ onOpenRoom }: { onOpenRoom(c: Credential): void })
   const [session, setSession] = useState<TeacherSession | null>(null);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
+  const [view, setView] = useState<'class' | 'management'>('class');
   const refresh = useCallback(() => { setSession(null); setError(''); setRetry(v => v + 1); }, []);
   useEffect(() => {
     let live = true;
@@ -36,19 +37,30 @@ export function TeacherArea({ onOpenRoom }: { onOpenRoom(c: Credential): void })
     </section></main>;
   }
   return <main className="page-shell teacher-area">
-    <section className="panel">
-      <p className="eyebrow">TEACHER</p>
-      <h1>{session.identity.email}</h1>
-      <p>{session.isMaster ? 'マスター教員' : '許可教員'}としてログイン中</p>
-      <div className="play-actions">
-        <button type="button" className="secondary-button" onClick={() => void logout()}>ログアウト</button>
-        <a className="secondary-button" href="#/">ホームへ戻る</a>
+    <section className="panel teacher-workspace">
+      <header className="teacher-workspace-header">
+        <div>
+          <p className="eyebrow">TEACHER</p>
+          <h1>{view === 'class' ? 'クラスコンペを作る' : '教員用の管理設定'}</h1>
+          <p>{view === 'class' ? '条件を選んで、クラスのコンペを始めましょう。' : '教員のアクセスと、アプリ全体の出題を管理します。'}</p>
+        </div>
+        <div className="teacher-workspace-navigation">
+          <span className="teacher-role">{session.isMaster ? 'マスター教員' : '許可教員'}</span>
+          <div className="teacher-identity"><span>{session.identity.email}</span><button type="button" className="secondary-button" onClick={() => void logout()}>ログアウト</button></div>
+          <div className="teacher-view-switch" role="group" aria-label="教員ページの表示">
+            <button type="button" className="choice" aria-pressed={view === 'class'} onClick={() => setView('class')}>クラスコンペ</button>
+            <button type="button" className="choice" aria-pressed={view === 'management'} onClick={() => setView('management')}>管理設定</button>
+          </div>
+        </div>
+      </header>
+      <div hidden={view !== 'class'}><CreateClassRoom session={session} onOpenRoom={onOpenRoom} /></div>
+      <div hidden={view !== 'management'} className="teacher-management">
+        {session.isMaster && <Allowlist session={session} />}
+        {session.isMaster && <MateSetting session={session} />}
+        <AdminCompounds session={session} master={session.isMaster} />
       </div>
+      <div className="play-actions"><a className="secondary-button" href="#/">ホームへ戻る</a></div>
     </section>
-    <CreateClassRoom session={session} onOpenRoom={onOpenRoom} />
-    {session.isMaster && <Allowlist session={session} />}
-    {session.isMaster && <MateSetting session={session} />}
-    <AdminCompounds session={session} master={session.isMaster} />
   </main>;
 }
 
@@ -68,8 +80,7 @@ function CreateClassRoom({ session, onOpenRoom }: { session: TeacherSession; onO
     } catch (e) { setError(e instanceof Error ? e.message : 'ルームを作成できませんでした'); }
     finally { setBusy(false); }
   };
-  return <section className="panel">
-    <h2>クラスコンペを作る</h2>
+  return <section className="teacher-create">
     <CompetitionSettingsForm value={settings} onChange={setSettings} disabled={busy} />
     {error && <p role="alert" className="error">{error}</p>}
     <button type="button" className="primary-action" disabled={busy} onClick={() => void create()}>ルームを作成</button>

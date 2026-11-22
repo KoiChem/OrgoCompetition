@@ -163,6 +163,7 @@ function Lobby({ snapshot, isHost, joinUrl, send, connected }: { snapshot: Snaps
         <h1>参加コード</h1>
         <p className="room-code">{room.code}</p>
         <QRCodeSVG value={joinUrl} size={224} title="参加用QRコード" />
+        <a className="join-url" href={joinUrl}>{joinUrl}</a>
       </section>
       <section className="panel host-lobby-roster">
         <h2>参加者 {room.participantCount} / {room.kind === 'mate' ? 4 : 50}人</h2>
@@ -172,7 +173,7 @@ function Lobby({ snapshot, isHost, joinUrl, send, connected }: { snapshot: Snaps
         {snapshot.own && <NicknameEditor nickname={snapshot.own.nickname} disabled={disabled} onSave={async nickname => { await send({ type: 'nickname', nickname }); }} />}
         {changed && <p className="settings-hint" role="status">設定を反映してから開始してください。</p>}
         <div className="play-actions">
-          <button type="button" className="primary-action" disabled={disabled || changed || participants.length < (room.kind === 'mate' ? 2 : 1)} onClick={() => { primeAudio(); void act(() => send({ type: 'start' })); }}>開始する</button>
+          <button type="button" className="primary-action" disabled={disabled || changed || participants.length < (room.kind === 'mate' ? 2 : 1)} onClick={() => { primeAudio(); void act(() => send({ type: 'start' })); }}>5秒後に開始</button>
           <button type="button" className="danger-button" disabled={disabled} onClick={() => { if (confirm('ルームを解散しますか？')) void act(() => send({ type: 'cancel' })); }}>解散する</button>
         </div>
       </section>
@@ -256,7 +257,7 @@ function Results({ snapshot, isClassTeacher }: { snapshot: Snapshot; isClassTeac
       <h2>{isClassTeacher ? '競技結果' : 'ランキング'}</h2>
       {isClassTeacher && <p>{snapshot.room.endReason === 'interrupted' ? '中断終了' : '競技終了'} · {ranking.length}人</p>}
       <ol id="room-ranking" className="ranking-list">
-        {visibleRanking.map(r => <li key={r.nickname + r.rank}><span>{r.rank}位　{r.nickname}</span><span>{r.correctCount}点　{fmt(r.elapsedCs)}{r.finalSyncUnconfirmed && <small>最終同期未確認</small>}</span></li>)}
+        {visibleRanking.map(r => <li key={r.nickname + r.rank} className={`ranking-row ranking-rank-${r.rank}`}><span>{r.rank}位　{r.nickname}</span><span>{r.correctCount}点　{fmt(r.elapsedCs)}{r.finalSyncUnconfirmed && <small>最終同期未確認</small>}</span></li>)}
       </ol>
       {results.averageCorrectCount !== undefined && <p>平均 {results.averageCorrectCount.toFixed(1)}点</p>}
       {isClassTeacher && ranking.some(r => r.rank > 5) && <button type="button" className="secondary-button" aria-expanded={showAll} aria-controls="room-ranking" onClick={() => setShowAll(current => !current)}>{showAll ? '上位5位まで表示' : '全員の結果を表示'}</button>}

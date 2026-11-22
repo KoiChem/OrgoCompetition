@@ -38,7 +38,7 @@ try {
 
   await host.locator('.participant-list li').nth(1).waitFor({ timeout: 10000 });
   log('HOST lobby participants:', await host.locator('.participant-list li').count());
-  await host.getByRole('button', { name: '開始する' }).click();
+  await host.getByRole('button', { name: '5秒後に開始' }).click();
   guest.on('console', m => log('GUEST console:', m.type(), m.text()));
   guest.on('pageerror', e => log('GUEST pageerror:', e.message));
   try { await guest.locator('.answer-choice').first().waitFor({ timeout: 20000 }); }
